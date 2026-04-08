@@ -103,11 +103,13 @@ export function McpPanel() {
       ]);
       if (toolsRes.status === "fulfilled" && toolsRes.value.ok) {
         const json = await toolsRes.value.json();
-        setTools(json.data || json.tools || json || []);
+        const d = json.data;
+        setTools(Array.isArray(d?.tools) ? d.tools : Array.isArray(json.tools) ? json.tools : Array.isArray(d) ? d : Array.isArray(json) ? json : []);
       }
       if (logsRes.status === "fulfilled" && logsRes.value.ok) {
         const json = await logsRes.value.json();
-        setLogs(json.data || json.logs || json || []);
+        const d = json.data;
+        setLogs(Array.isArray(d?.logs) ? d.logs : Array.isArray(json.logs) ? json.logs : Array.isArray(d) ? d : Array.isArray(json) ? json : []);
       }
       if (statsRes.status === "fulfilled" && statsRes.value.ok) {
         const json = await statsRes.value.json();
@@ -202,13 +204,13 @@ export function McpPanel() {
                   <p className="text-[10px] text-muted-foreground">
                     {item.label}
                   </p>
-                  <p className="text-xl font-bold text-foreground mt-0.5">
+                  <div className="text-xl font-bold text-foreground mt-0.5">
                     {loading ? (
                       <Skeleton className="h-6 w-12" />
                     ) : (
                       item.value
                     )}
-                  </p>
+                  </div>
                 </div>
                 <div
                   className={`flex items-center justify-center size-8 rounded-lg ${item.bg}`}

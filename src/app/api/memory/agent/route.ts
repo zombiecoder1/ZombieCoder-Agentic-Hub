@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { memoryService } from '@/services/memoryService';
+import { db } from '@/lib/db';
 import type { ApiResponse } from '@/types';
 
 const POWERED_BY = 'ZombieCoder-by-SahonSrabon';
@@ -11,17 +12,32 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit');
     const topic = searchParams.get('topic') ?? undefined;
 
-    if (!agentId) {
+    // If agentId is provided, filter by agent
+    if (agentId) {
+      const { memories, total } = await memoryService.getAgentMemories(agentId, {
+        limit: limit ? parseInt(limit, 10) : undefined,
+        topic,
+      });
+
       return NextResponse.json<ApiResponse>(
-        { success: false, error: 'Missing required query parameter: agentId', timestamp: new Date().toISOString() },
-        { status: 400, headers: { 'X-Powered-By': POWERED_BY } },
+        { success: true, data: { memories, total }, timestamp: new Date().toISOString() },
+        { status: 200, headers: { 'X-Powered-By': POWERED_BY } },
       );
     }
 
-    const { memories, total } = await memoryService.getAgentMemories(agentId, {
-      limit: limit ? parseInt(limit, 10) : undefined,
-      topic,
-    });
+    // No agentId — list all agent memories
+    const parsedLimit = limit ? Math.min(Math.max(1, parseInt(limit, 10)), 200) : 50;
+    const where: Record<string, unknown> = {};
+    if (topic) where.topic = topic;
+
+    const [memories, total] = await Promise.all([
+      db.agentMemory.findMany({
+        where,
+        take: parsedLimit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      db.agentMemory.count({ where }),
+    ]);
 
     return NextResponse.json<ApiResponse>(
       { success: true, data: { memories, total }, timestamp: new Date().toISOString() },

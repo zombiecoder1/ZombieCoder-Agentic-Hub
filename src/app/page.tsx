@@ -35,9 +35,10 @@ export default function Home() {
         if (res.ok && mountedRef.current) {
           const json = await res.json();
           const data = json.data || json;
+          const services = data.services || data;
           setHealthStatus({
-            database: data.database as HealthStatus["database"],
-            stockServer: data.stockServer as HealthStatus["stockServer"],
+            database: services.database as HealthStatus["database"],
+            stockServer: services.stockServer as HealthStatus["stockServer"],
             overall: data.status as HealthStatus["overall"],
           });
         }

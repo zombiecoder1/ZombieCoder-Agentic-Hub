@@ -117,10 +117,9 @@ export function ChatPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: input.trim(),
+          messages: [{ role: "user", content: input.trim() }],
           agentId: agentId || undefined,
           providerId: providerId || undefined,
-          sessionId: undefined,
         }),
       });
 
@@ -129,10 +128,10 @@ export function ChatPanel() {
         const response = data.data || data;
         const assistantMessage: ChatMessage = {
           role: "assistant",
-          content: response.response || response.message || response.content || "No response received.",
+          content: response.content || response.response || response.message || "No response received.",
           timestamp: response.timestamp || new Date().toISOString(),
-          tokens: response.tokens || response.tokenCount,
-          latency: response.latency,
+          tokens: response.tokenCount || response.tokens,
+          latency: response.latencyMs || response.latency,
         };
         setMessages((prev) => [...prev, assistantMessage]);
       } else {

@@ -76,6 +76,7 @@ interface SessionEntry {
   createdAt?: string;
   updatedAt?: string;
   messageCount?: number;
+  _count?: { messages: number };
   [key: string]: unknown;
 }
 
@@ -117,15 +118,18 @@ export function MemoryPanel() {
       ]);
       if (agentRes.status === "fulfilled" && agentRes.value.ok) {
         const json = await agentRes.value.json();
-        setAgentMemories(json.data || json || []);
+        const d = json.data;
+        setAgentMemories(Array.isArray(d?.memories) ? d.memories : Array.isArray(d) ? d : Array.isArray(json) ? json : []);
       }
       if (indivRes.status === "fulfilled" && indivRes.value.ok) {
         const json = await indivRes.value.json();
-        setIndividualMemories(json.data || json || []);
+        const d = json.data;
+        setIndividualMemories(Array.isArray(d?.memories) ? d.memories : Array.isArray(d) ? d : Array.isArray(json) ? json : []);
       }
       if (sessionsRes.status === "fulfilled" && sessionsRes.value.ok) {
         const json = await sessionsRes.value.json();
-        setSessions(json.data || json || []);
+        const d = json.data;
+        setSessions(Array.isArray(d?.sessions) ? d.sessions : Array.isArray(d) ? d : Array.isArray(json) ? json : []);
       }
     } catch {
       toast.error("Failed to fetch memory data");
@@ -529,7 +533,7 @@ export function MemoryPanel() {
                         <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
                           <span className="inline-flex items-center gap-0.5">
                             <MessageSquare className="size-2.5" />
-                            {session.messageCount || 0} messages
+                            {session._count?.messages ?? session.messageCount ?? 0} messages
                           </span>
                           {session.createdAt && (
                             <span>

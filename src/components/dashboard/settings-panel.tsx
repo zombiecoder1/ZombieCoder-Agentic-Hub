@@ -105,7 +105,7 @@ export function SettingsPanel() {
     setSaving(true);
     try {
       const res = await fetch("/api/settings", {
-        method: "POST",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, value: editValue }),
       });

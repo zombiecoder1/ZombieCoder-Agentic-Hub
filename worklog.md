@@ -172,3 +172,36 @@ Stage Summary:
 - System fully operational
 - All services running
 - Zero lint errors
+
+---
+Task ID: 11
+Agent: Main Coordinator (Audit & Fix)
+Task: Comprehensive audit — fix all hydration errors, API/frontend mismatches, and broken logic
+
+Work Log:
+- Audited every dashboard component, API route, service, and type definition
+- Found and fixed 8 critical issues across 6 files:
+  1. dashboard-overview.tsx: Fixed hydration error (Skeleton/div inside p tag)
+  2. mcp-panel.tsx: Fixed hydration error (Skeleton/div inside p tag)
+  3. chat-panel.tsx: Fixed request body — frontend sent {message: string} but API expected {messages: Array}. Chat ALWAYS returned 400 before fix.
+  4. settings-panel.tsx: Fixed HTTP method — frontend sent POST but API only has PUT. Settings NEVER saved before fix.
+  5. dashboard-overview.tsx: Fixed ALL data shape mismatches — health API data nested under services.{}, metrics API returns {total:N} objects, status API has identity.version not flat version. Dashboard showed [object Object] and wrong values.
+  6. page.tsx: Fixed health status parsing for header badges — read from services.database not top-level database.
+  7. memory-panel.tsx: Fixed data shape extraction — API returns {data: {memories:[], total:N}} but frontend expected flat array. Would crash on .filter().
+  8. memory-panel.tsx: Fixed session.messageCount → session._count?.messages to match actual API response shape.
+- Fixed /api/memory/agent to accept optional agentId (was always 400 without it)
+- Fixed mcp-panel.tsx data extraction for tools and logs arrays from nested API responses
+- Verified ALL 0 demos, 0 mocks, 0 simulations — every backend call is authentic
+- Ethics validation framework is real and active (rule-based, deterministic)
+- Zero lint errors after all fixes
+- Dev server compiles and runs cleanly
+
+Stage Summary:
+- 8 critical bugs fixed
+- Chat now works (messages array format)
+- Settings now save (PUT method)
+- Dashboard displays correct real data (health, metrics, status)
+- Memory panel no longer crashes
+- Zero hydration errors
+- Zero lint errors
+- All APIs verified returning correct shapes

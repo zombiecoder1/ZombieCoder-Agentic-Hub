@@ -31,25 +31,43 @@ import {
 } from "lucide-react";
 
 interface HealthData {
-  status: string;
-  database?: string;
-  stockServer?: string;
-  uptime?: string;
+  status?: string;
+  services?: {
+    database?: string;
+    stockServer?: string;
+    providers?: Record<string, string>;
+  };
+  uptime?: number;
+  version?: string;
   timestamp?: string;
+  [key: string]: unknown;
 }
 
 interface MetricsData {
-  providers?: number;
-  agents?: number;
-  sessions?: number;
-  memories?: number;
+  providers?: { total: number } | number;
+  agents?: { total: number } | number;
+  sessions?: { total: number } | number;
+  memories?: { agent?: number; individual?: number; total: number } | number;
+  tools?: { totalExecutions: number; successRate: string };
   [key: string]: unknown;
 }
 
 interface StatusData {
-  version?: string;
-  environment?: string;
-  uptime?: string;
+  identity?: {
+    name?: string;
+    version?: string;
+    tagline?: string;
+    owner?: string;
+    organization?: string;
+  };
+  uptime?: number;
+  activeProvider?: { name?: string; type?: string; model?: string };
+  counts?: {
+    providers?: number;
+    agents?: number;
+    sessions?: number;
+    memories?: number;
+  };
   [key: string]: unknown;
 }
 
@@ -107,12 +125,29 @@ export function DashboardOverview() {
   ): "healthy" | "unhealthy" | "degraded" | "unknown" => {
     if (!s) return "unknown";
     const lower = s.toLowerCase();
-    if (lower === "healthy" || lower === "ok" || lower === "up")
+    if (lower === "healthy" || lower === "ok" || lower === "up" || lower === "connected" || lower === "active")
       return "healthy";
     if (lower === "degraded" || lower === "warning") return "degraded";
-    if (lower === "unhealthy" || lower === "down" || lower === "error")
+    if (lower === "unhealthy" || lower === "down" || lower === "error" || lower === "disconnected" || lower === "inactive")
       return "unhealthy";
     return "unknown";
+  };
+
+  const formatUptime = (seconds?: number): string => {
+    if (seconds == null) return "—";
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+
+  // Resolve nested metrics to plain numbers
+  const resolveNum = (val?: { total: number } | number): number => {
+    if (val == null) return 0;
+    if (typeof val === "number") return val;
+    return val.total ?? 0;
   };
 
   return (
@@ -139,13 +174,13 @@ export function DashboardOverview() {
                     variant="outline"
                     className="text-[10px] font-mono text-emerald-400 border-emerald-500/30"
                   >
-                    {status?.version || "v1.0.0"}
+                    {status?.identity?.version || "v1.0.0"}
                   </Badge>
                   <Badge
                     variant="outline"
                     className="text-[10px] font-mono text-muted-foreground border-border"
                   >
-                    {status?.environment || "development"}
+                    {status?.identity?.organization || "development"}
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5">
@@ -198,7 +233,7 @@ export function DashboardOverview() {
                       <Database className="size-3" /> Database
                     </span>
                     <HealthBadge
-                      status={parseStatus(health?.database as string | undefined)}
+                      status={parseStatus(health?.services?.database as string | undefined)}
                     />
                   </div>
                   <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
@@ -207,15 +242,15 @@ export function DashboardOverview() {
                     </span>
                     <HealthBadge
                       status={parseStatus(
-                        health?.stockServer as string | undefined
+                        health?.services?.stockServer as string | undefined
                       )}
                     />
                   </div>
                 </div>
               )}
-              {health?.uptime && (
+              {(health?.uptime != null || status?.uptime != null) && (
                 <p className="text-xs text-muted-foreground flex items-center gap-1.5 pt-1">
-                  <Clock className="size-3" /> Uptime: {health.uptime}
+                  <Clock className="size-3" /> Uptime: {formatUptime(health?.uptime ?? status?.uptime)}
                 </p>
               )}
             </CardContent>
@@ -226,28 +261,28 @@ export function DashboardOverview() {
         {[
           {
             label: "Providers",
-            value: metrics?.providers ?? 0,
+            value: resolveNum(metrics?.providers as { total: number } | number | undefined),
             icon: Server,
             color: "text-emerald-400",
             bg: "bg-emerald-500/15",
           },
           {
             label: "Agents",
-            value: metrics?.agents ?? 0,
+            value: resolveNum(metrics?.agents as { total: number } | number | undefined),
             icon: Bot,
             color: "text-cyan-400",
             bg: "bg-cyan-500/15",
           },
           {
             label: "Sessions",
-            value: metrics?.sessions ?? 0,
+            value: resolveNum(metrics?.sessions as { total: number } | number | undefined),
             icon: MessageSquare,
             color: "text-amber-400",
             bg: "bg-amber-500/15",
           },
           {
             label: "Memories",
-            value: metrics?.memories ?? 0,
+            value: resolveNum(metrics?.memories as { total: number } | number | undefined),
             icon: Brain,
             color: "text-purple-400",
             bg: "bg-purple-500/15",
@@ -265,13 +300,13 @@ export function DashboardOverview() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs text-muted-foreground">{item.label}</p>
-                    <p className="text-2xl font-bold text-foreground mt-1">
+                    <div className="text-2xl font-bold text-foreground mt-1">
                       {loading ? (
                         <Skeleton className="h-8 w-12" />
                       ) : (
                         item.value
                       )}
-                    </p>
+                    </div>
                   </div>
                   <div
                     className={`flex items-center justify-center size-10 rounded-lg ${item.bg}`}
@@ -316,19 +351,19 @@ export function DashboardOverview() {
                   <div className="flex justify-between">
                     <span>Version</span>
                     <span className="text-foreground font-mono">
-                      {status?.version || "v1.0.0"}
+                      {status?.identity?.version || "v1.0.0"}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Environment</span>
+                    <span>Organization</span>
                     <span className="text-foreground font-mono">
-                      {status?.environment || "development"}
+                      {status?.identity?.organization || "Developer Zone"}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Uptime</span>
                     <span className="text-foreground font-mono">
-                      {status?.uptime || health?.uptime || "—"}
+                      {formatUptime(status?.uptime ?? health?.uptime)}
                     </span>
                   </div>
                 </>
