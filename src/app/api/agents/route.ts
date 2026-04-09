@@ -11,7 +11,7 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
       include: {
         provider: { select: { id: true, name: true, type: true } },
-        _count: { select: { memories: true, chatSessions: true } },
+        _count: { select: { memories: true, chatSessions: true, toolAssignments: true } },
       },
     });
 
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const validTypes: AgentType[] = ['editor', 'chat', 'cli', 'orchestrator'];
+    const validTypes: AgentType[] = ['chatbot', 'assistant', 'coder', 'researcher', 'custom'];
     if (!validTypes.includes(body.type)) {
       return NextResponse.json(
         { success: false, error: `type must be one of: ${validTypes.join(', ')}`, timestamp: new Date().toISOString() },

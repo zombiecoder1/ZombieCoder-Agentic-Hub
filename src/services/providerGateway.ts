@@ -41,7 +41,9 @@ export class ProviderGateway {
    * 1. Specific providerId (if provided)
    * 2. Database active provider setting
    * 3. Environment variables
-   * 4. System defaults (Ollama localhost:11434)
+   *
+   * IMPORTANT: No silent fallback to localhost services.
+   * If no provider is configured, a clear error is thrown.
    */
   async getActiveProvider(providerId?: string): Promise<ILLMProvider> {
     // If specific provider requested
@@ -65,8 +67,12 @@ export class ProviderGateway {
       return envProvider;
     }
 
-    // System default: Ollama
-    return this.getSystemDefaultProvider();
+    // No provider configured — throw a clear error instead of silently calling localhost
+    throw new Error(
+      'No AI provider configured. Please add and activate a provider in the Providers panel, ' +
+      'or set the OLLAMA_BASE_URL environment variable. The system does not call any AI service directly — ' +
+      'all traffic must route through a configured provider via the Public Gateway.'
+    );
   }
 
   // ─── Chat Completions ────────────────────────────────────────────────────
@@ -333,16 +339,6 @@ export class ProviderGateway {
     }
 
     return null;
-  }
-
-  private getSystemDefaultProvider(): ILLMProvider {
-    logger.info('Using system default provider (Ollama localhost)');
-    return ProviderFactory.create('ollama', {
-      name: 'Ollama (default)',
-      type: 'ollama',
-      endpoint: 'http://localhost:11434',
-      model: 'llama3.1:latest',
-    });
   }
 
   /** Dispose all cached providers */

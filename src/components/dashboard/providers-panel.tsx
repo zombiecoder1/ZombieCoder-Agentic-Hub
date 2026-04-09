@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { HealthBadge } from "./health-badge";
 import {
@@ -49,7 +49,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import {
   Plus,
@@ -60,6 +60,10 @@ import {
   Loader2,
   RefreshCw,
   Server,
+  Pencil,
+  Eye,
+  Clock,
+  Activity,
 } from "lucide-react";
 
 interface Provider {
@@ -67,9 +71,16 @@ interface Provider {
   name: string;
   type?: string;
   endpoint?: string;
+  model?: string;
   status?: string;
   isDefault?: boolean;
   latency?: number;
+  lastHealthCheck?: string;
+  errorCount?: number;
+  lastError?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  config?: string;
   [key: string]: unknown;
 }
 
@@ -77,12 +88,17 @@ export function ProvidersPanel() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [editProvider, setEditProvider] = useState<Provider | null>(null);
+  const [detailProvider, setDetailProvider] = useState<Provider | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     type: "openai",
     endpoint: "",
-    apiKey: "",
+    model: "",
+    apiKeyEnvVar: "",
   });
 
   const fetchProviders = useCallback(async () => {
@@ -104,6 +120,9 @@ export function ProvidersPanel() {
     fetchProviders();
   }, [fetchProviders]);
 
+  const resetForm = () =>
+    setFormData({ name: "", type: "openai", endpoint: "", model: "", apiKeyEnvVar: "" });
+
   const handleCreate = async () => {
     if (!formData.name || !formData.endpoint) {
       toast.error("Name and endpoint are required");
@@ -118,7 +137,7 @@ export function ProvidersPanel() {
       if (res.ok) {
         toast.success(`Provider "${formData.name}" created`);
         setCreateOpen(false);
-        setFormData({ name: "", type: "openai", endpoint: "", apiKey: "" });
+        resetForm();
         fetchProviders();
       } else {
         const err = await res.json();
@@ -126,6 +145,53 @@ export function ProvidersPanel() {
       }
     } catch {
       toast.error("Failed to create provider");
+    }
+  };
+
+  const handleEdit = (provider: Provider) => {
+    setEditProvider(provider);
+    setFormData({
+      name: provider.name,
+      type: provider.type || "openai",
+      endpoint: provider.endpoint || "",
+      model: provider.model || "",
+      apiKeyEnvVar: (provider as Record<string, unknown>).apiKeyEnvVar as string || "",
+    });
+    setEditOpen(true);
+  };
+
+  const handleUpdate = async () => {
+    if (!editProvider) return;
+    try {
+      const res = await fetch(`/api/providers/${editProvider.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+      if (res.ok) {
+        toast.success(`Provider "${formData.name}" updated`);
+        setEditOpen(false);
+        setEditProvider(null);
+        fetchProviders();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "Failed to update provider");
+      }
+    } catch {
+      toast.error("Failed to update provider");
+    }
+  };
+
+  const handleViewDetail = async (provider: Provider) => {
+    try {
+      const res = await fetch(`/api/providers/${provider.id}`);
+      if (res.ok) {
+        const json = await res.json();
+        setDetailProvider(json.data || json);
+        setDetailOpen(true);
+      }
+    } catch {
+      toast.error("Failed to load provider details");
     }
   };
 
@@ -197,6 +263,77 @@ export function ProvidersPanel() {
     return "unknown";
   };
 
+  const providerForm = (
+    <div className="space-y-4 py-2">
+      <div className="space-y-2">
+        <Label htmlFor="provider-name">Name</Label>
+        <Input
+          id="provider-name"
+          placeholder="e.g., OpenAI GPT-4"
+          value={formData.name}
+          onChange={(e) =>
+            setFormData({ ...formData, name: e.target.value })
+          }
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="provider-type">Type</Label>
+        <Select
+          value={formData.type}
+          onValueChange={(v) =>
+            setFormData({ ...formData, type: v })
+          }
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Select type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ollama">Ollama</SelectItem>
+            <SelectItem value="openai">OpenAI</SelectItem>
+            <SelectItem value="gemini">Google AI</SelectItem>
+            <SelectItem value="llamacpp">LlamaCpp</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="provider-endpoint">Endpoint URL</Label>
+        <Input
+          id="provider-endpoint"
+          placeholder="https://api.openai.com/v1"
+          value={formData.endpoint}
+          onChange={(e) =>
+            setFormData({ ...formData, endpoint: e.target.value })
+          }
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="provider-model">Default Model</Label>
+        <Input
+          id="provider-model"
+          placeholder="e.g., gpt-4, llama3.1:latest"
+          value={formData.model}
+          onChange={(e) =>
+            setFormData({ ...formData, model: e.target.value })
+          }
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="provider-apikey">API Key Env Variable</Label>
+        <Input
+          id="provider-apikey"
+          placeholder="e.g., OPENAI_API_KEY"
+          value={formData.apiKeyEnvVar}
+          onChange={(e) =>
+            setFormData({ ...formData, apiKeyEnvVar: e.target.value })
+          }
+        />
+        <p className="text-[10px] text-muted-foreground">
+          Name of the environment variable containing the API key. The actual key is never stored.
+        </p>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -206,7 +343,7 @@ export function ProvidersPanel() {
             AI Providers
           </h2>
           <p className="text-sm text-muted-foreground">
-            Manage your AI provider configurations
+            Manage your AI provider configurations — all traffic routes through the Public Gateway
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -230,65 +367,10 @@ export function ProvidersPanel() {
               <DialogHeader>
                 <DialogTitle>Add New Provider</DialogTitle>
                 <DialogDescription>
-                  Configure a new AI provider for your agents.
+                  Configure a new AI provider. All requests route through the Public Gateway — providers are never called directly.
                 </DialogDescription>
               </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div className="space-y-2">
-                  <Label htmlFor="provider-name">Name</Label>
-                  <Input
-                    id="provider-name"
-                    placeholder="e.g., OpenAI GPT-4"
-                    value={formData.name}
-                    onChange={(e) =>
-                      setFormData({ ...formData, name: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="provider-type">Type</Label>
-                  <Select
-                    value={formData.type}
-                    onValueChange={(v) =>
-                      setFormData({ ...formData, type: v })
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="anthropic">Anthropic</SelectItem>
-                      <SelectItem value="google">Google AI</SelectItem>
-                      <SelectItem value="ollama">Ollama</SelectItem>
-                      <SelectItem value="custom">Custom</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="provider-endpoint">Endpoint URL</Label>
-                  <Input
-                    id="provider-endpoint"
-                    placeholder="https://api.openai.com/v1"
-                    value={formData.endpoint}
-                    onChange={(e) =>
-                      setFormData({ ...formData, endpoint: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="provider-apikey">API Key</Label>
-                  <Input
-                    id="provider-apikey"
-                    type="password"
-                    placeholder="sk-..."
-                    value={formData.apiKey}
-                    onChange={(e) =>
-                      setFormData({ ...formData, apiKey: e.target.value })
-                    }
-                  />
-                </div>
-              </div>
+              {providerForm}
               <DialogFooter>
                 <Button
                   variant="outline"
@@ -391,9 +473,28 @@ export function ProvidersPanel() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            className="size-8 text-muted-foreground hover:text-cyan-400"
+                            onClick={() => handleViewDetail(provider)}
+                            title="View Details"
+                          >
+                            <Eye className="size-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             className="size-8 text-muted-foreground hover:text-emerald-400"
+                            onClick={() => handleEdit(provider)}
+                            title="Edit"
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-muted-foreground hover:text-blue-400"
                             onClick={() => handleTest(provider.id)}
                             disabled={testingId === provider.id}
+                            title="Test Connection"
                           >
                             {testingId === provider.id ? (
                               <Loader2 className="size-3.5 animate-spin" />
@@ -406,7 +507,7 @@ export function ProvidersPanel() {
                             size="icon"
                             className="size-8 text-muted-foreground hover:text-amber-400"
                             onClick={() => handleActivate(provider.id)}
-                            title="Activate"
+                            title="Set as Default"
                           >
                             <Zap className="size-3.5" />
                           </Button>
@@ -452,6 +553,147 @@ export function ProvidersPanel() {
           )}
         </CardContent>
       </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Provider</DialogTitle>
+            <DialogDescription>
+              Update provider configuration. Changes take effect immediately.
+            </DialogDescription>
+          </DialogHeader>
+          {providerForm}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditOpen(false);
+                setEditProvider(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleUpdate}>
+              <Pencil className="size-4" />
+              Update
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Globe className="size-5 text-emerald-400" />
+              {detailProvider?.name || "Provider Details"}
+            </DialogTitle>
+            <DialogDescription>Full provider configuration and health information</DialogDescription>
+          </DialogHeader>
+          {detailProvider && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg bg-muted/40">
+                  <div className="text-[10px] text-muted-foreground uppercase mb-1">Provider ID</div>
+                  <div className="text-xs font-mono text-foreground">{detailProvider.id}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/40">
+                  <div className="text-[10px] text-muted-foreground uppercase mb-1">Type</div>
+                  <Badge variant="secondary">{detailProvider.type}</Badge>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/40">
+                  <div className="text-[10px] text-muted-foreground uppercase mb-1">Status</div>
+                  <HealthBadge
+                    status={parseStatus(detailProvider.status as string | undefined)}
+                    label={(detailProvider.status as string) || "Unknown"}
+                  />
+                </div>
+                <div className="p-3 rounded-lg bg-muted/40">
+                  <div className="text-[10px] text-muted-foreground uppercase mb-1">Default</div>
+                  <Badge variant={detailProvider.isDefault ? "default" : "outline"}>
+                    {detailProvider.isDefault ? "Yes" : "No"}
+                  </Badge>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-1 text-[10px] text-muted-foreground uppercase">
+                  <Activity className="size-3" /> Health Information
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-2 rounded bg-muted/30">
+                    <span className="text-[10px] text-muted-foreground">Latency</span>
+                    <div className="text-xs font-mono text-foreground">{detailProvider.latency ? `${detailProvider.latency}ms` : "N/A"}</div>
+                  </div>
+                  <div className="p-2 rounded bg-muted/30">
+                    <span className="text-[10px] text-muted-foreground">Error Count</span>
+                    <div className="text-xs font-mono text-foreground">{detailProvider.errorCount ?? 0}</div>
+                  </div>
+                  <div className="p-2 rounded bg-muted/30 col-span-2">
+                    <span className="text-[10px] text-muted-foreground">Last Health Check</span>
+                    <div className="text-xs font-mono text-foreground">
+                      {detailProvider.lastHealthCheck
+                        ? new Date(detailProvider.lastHealthCheck).toLocaleString()
+                        : "Never"}
+                    </div>
+                  </div>
+                </div>
+                {detailProvider.lastError && (
+                  <div className="p-2 rounded bg-red-500/5 border border-red-500/20">
+                    <span className="text-[10px] text-muted-foreground">Last Error</span>
+                    <div className="text-xs text-red-400 font-mono">{detailProvider.lastError}</div>
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <div className="text-[10px] text-muted-foreground uppercase">Connection Details</div>
+                <div className="p-2 rounded bg-muted/30">
+                  <span className="text-[10px] text-muted-foreground">Endpoint</span>
+                  <div className="text-xs font-mono text-foreground break-all">{detailProvider.endpoint || "Not configured"}</div>
+                </div>
+                <div className="p-2 rounded bg-muted/30">
+                  <span className="text-[10px] text-muted-foreground">Model</span>
+                  <div className="text-xs font-mono text-foreground">{detailProvider.model || "Not configured"}</div>
+                </div>
+                {(detailProvider as Record<string, unknown>).apiKeyEnvVar && (
+                  <div className="p-2 rounded bg-muted/30">
+                    <span className="text-[10px] text-muted-foreground">API Key Env Variable</span>
+                    <div className="text-xs font-mono text-foreground">{(detailProvider as Record<string, unknown>).apiKeyEnvVar as string}</div>
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                <Clock className="size-3" />
+                <span>Created: {detailProvider.createdAt ? new Date(detailProvider.createdAt).toLocaleString() : "Unknown"}</span>
+                <span className="mx-1">|</span>
+                <span>Updated: {detailProvider.updatedAt ? new Date(detailProvider.updatedAt).toLocaleString() : "Unknown"}</span>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+// Simple Label component
+function Label({ children, ...props }: { children: React.ReactNode; className?: string } & React.LabelHTMLAttributes<HTMLLabelElement>) {
+  return (
+    <label
+      className={`text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 ${props.className || ""}`}
+      {...props}
+    >
+      {children}
+    </label>
   );
 }

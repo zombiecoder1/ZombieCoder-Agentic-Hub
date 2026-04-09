@@ -12,7 +12,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { HealthBadge } from "./health-badge";
@@ -43,6 +42,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import {
   Plus,
@@ -55,6 +56,11 @@ import {
   Shield,
   Wrench,
   Pencil,
+  Eye,
+  Clock,
+  Brain,
+  Server,
+  Hash,
 } from "lucide-react";
 
 interface Agent {
@@ -62,10 +68,14 @@ interface Agent {
   name: string;
   type?: string;
   persona?: string;
+  personaName?: string;
   status?: string;
   capabilities?: string[];
   providerId?: string;
   systemPrompt?: string;
+  description?: string;
+  provider?: { id: string; name: string; type: string } | null;
+  _count?: { memories: number; chatSessions: number; toolAssignments: number };
   createdAt?: string;
   updatedAt?: string;
   [key: string]: unknown;
@@ -79,12 +89,22 @@ const typeColors: Record<string, string> = {
   custom: "text-pink-400 bg-pink-500/15",
 };
 
+const typeLabels: Record<string, string> = {
+  chatbot: "Chatbot",
+  assistant: "Assistant",
+  coder: "Coder",
+  researcher: "Researcher",
+  custom: "Custom",
+};
+
 export function AgentsPanel() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [editAgent, setEditAgent] = useState<Agent | null>(null);
+  const [detailAgent, setDetailAgent] = useState<Agent | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     type: "assistant",
@@ -151,11 +171,16 @@ export function AgentsPanel() {
     setFormData({
       name: agent.name,
       type: agent.type || "assistant",
-      persona: agent.persona || "",
+      persona: agent.personaName || agent.persona || "",
       systemPrompt: agent.systemPrompt || "",
       providerId: agent.providerId || "",
     });
     setEditOpen(true);
+  };
+
+  const handleViewDetail = (agent: Agent) => {
+    setDetailAgent(agent);
+    setDetailOpen(true);
   };
 
   const handleUpdate = async () => {
@@ -235,7 +260,7 @@ export function AgentsPanel() {
         </Select>
       </div>
       <div className="space-y-2">
-        <Label>Persona</Label>
+        <Label>Persona / Description</Label>
         <Input
           placeholder="e.g., Helpful coding assistant"
           value={formData.persona}
@@ -371,9 +396,9 @@ export function AgentsPanel() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {agent.persona && (
+                    {(agent.personaName || agent.persona || agent.description) && (
                       <p className="text-xs text-muted-foreground line-clamp-2">
-                        {agent.persona}
+                        {agent.personaName || agent.persona || agent.description}
                       </p>
                     )}
                     <div className="flex items-center gap-2 flex-wrap">
@@ -384,7 +409,7 @@ export function AgentsPanel() {
                         }`}
                       >
                         <Cpu className="size-2.5 mr-0.5" />
-                        {agent.type || "custom"}
+                        {typeLabels[agent.type || ""] || agent.type || "custom"}
                       </Badge>
                       {agent.capabilities?.map((cap) => (
                         <Badge
@@ -396,12 +421,74 @@ export function AgentsPanel() {
                         </Badge>
                       ))}
                     </div>
+
+                    {/* Agent Metrics */}
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="p-1.5 rounded bg-muted/40">
+                        <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-0.5">
+                          <Brain className="size-2.5" />
+                          <span>Memories</span>
+                        </div>
+                        <div className="text-xs font-bold text-foreground">
+                          {agent._count?.memories ?? 0}
+                        </div>
+                      </div>
+                      <div className="p-1.5 rounded bg-muted/40">
+                        <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-0.5">
+                          <MessageSquare className="size-2.5" />
+                          <span>Sessions</span>
+                        </div>
+                        <div className="text-xs font-bold text-foreground">
+                          {agent._count?.chatSessions ?? 0}
+                        </div>
+                      </div>
+                      <div className="p-1.5 rounded bg-muted/40">
+                        <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-0.5">
+                          <Wrench className="size-2.5" />
+                          <span>Tools</span>
+                        </div>
+                        <div className="text-xs font-bold text-foreground">
+                          {agent._count?.toolAssignments ?? 0}
+                        </div>
+                      </div>
+                    </div>
+
+                    {agent.provider && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <Server className="size-2.5" />
+                        <span>Provider: {agent.provider.name}</span>
+                        <Badge variant="outline" className="text-[8px] px-1 py-0">
+                          {agent.provider.type}
+                        </Badge>
+                      </div>
+                    )}
+
+                    {agent.createdAt && (
+                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <Clock className="size-2.5" />
+                        <span>Created: {new Date(agent.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    )}
+
+                    <Separator />
+
+                    {/* Action Buttons */}
                     <div className="flex items-center gap-1 pt-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 text-muted-foreground hover:text-cyan-400"
+                        onClick={() => handleViewDetail(agent)}
+                        title="View Details"
+                      >
+                        <Eye className="size-3" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="size-7 text-muted-foreground hover:text-emerald-400"
                         onClick={() => handleEdit(agent)}
+                        title="Edit"
                       >
                         <Pencil className="size-3" />
                       </Button>
@@ -421,6 +508,7 @@ export function AgentsPanel() {
                             <AlertDialogDescription>
                               Are you sure you want to delete &quot;
                               {agent.name}&quot;? This action cannot be undone.
+                              All associated memories, sessions, and tool assignments will be permanently deleted.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -445,7 +533,7 @@ export function AgentsPanel() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Edit Agent</DialogTitle>
             <DialogDescription>
@@ -470,6 +558,137 @@ export function AgentsPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bot className="size-5 text-emerald-400" />
+              {detailAgent?.name}
+            </DialogTitle>
+            <DialogDescription>Full agent details and configuration</DialogDescription>
+          </DialogHeader>
+          {detailAgent && (
+            <ScrollArea className="max-h-[60vh]">
+              <div className="space-y-4 pr-4">
+                {/* Identity */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-muted/40">
+                    <div className="text-[10px] text-muted-foreground uppercase mb-1">Agent ID</div>
+                    <div className="text-xs font-mono text-foreground">{detailAgent.id}</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/40">
+                    <div className="text-[10px] text-muted-foreground uppercase mb-1">Status</div>
+                    <HealthBadge
+                      status={parseStatus(detailAgent.status as string | undefined)}
+                      label={(detailAgent.status as string) || "Unknown"}
+                    />
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/40">
+                    <div className="text-[10px] text-muted-foreground uppercase mb-1">Type</div>
+                    <Badge variant="secondary" className={`text-xs ${typeColors[detailAgent.type || ""] || ""}`}>
+                      {typeLabels[detailAgent.type || ""] || detailAgent.type}
+                    </Badge>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/40">
+                    <div className="text-[10px] text-muted-foreground uppercase mb-1">Created</div>
+                    <div className="text-xs text-foreground">
+                      {detailAgent.createdAt
+                        ? new Date(detailAgent.createdAt).toLocaleString()
+                        : "—"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Provider */}
+                {detailAgent.provider && (
+                  <div className="p-3 rounded-lg bg-muted/30 border border-border">
+                    <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center gap-1">
+                      <Server className="size-3" /> Provider
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">{detailAgent.provider.name}</span>
+                      <Badge variant="outline" className="text-[9px]">{detailAgent.provider.type}</Badge>
+                    </div>
+                  </div>
+                )}
+
+                {/* Metrics */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-center">
+                    <Brain className="size-5 text-emerald-400 mx-auto mb-1" />
+                    <div className="text-lg font-bold text-foreground">{detailAgent._count?.memories ?? 0}</div>
+                    <div className="text-[10px] text-muted-foreground">Memories</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-cyan-500/5 border border-cyan-500/20 text-center">
+                    <MessageSquare className="size-5 text-cyan-400 mx-auto mb-1" />
+                    <div className="text-lg font-bold text-foreground">{detailAgent._count?.chatSessions ?? 0}</div>
+                    <div className="text-[10px] text-muted-foreground">Sessions</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-center">
+                    <Wrench className="size-5 text-amber-400 mx-auto mb-1" />
+                    <div className="text-lg font-bold text-foreground">{detailAgent._count?.toolAssignments ?? 0}</div>
+                    <div className="text-[10px] text-muted-foreground">Tool Assignments</div>
+                  </div>
+                </div>
+
+                {/* Persona */}
+                {(detailAgent.personaName || detailAgent.persona) && (
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center gap-1">
+                      <Shield className="size-3" /> Persona
+                    </div>
+                    <p className="text-sm text-foreground p-3 rounded-lg bg-muted/30 border border-border">
+                      {detailAgent.personaName || detailAgent.persona}
+                    </p>
+                  </div>
+                )}
+
+                {/* System Prompt */}
+                {detailAgent.systemPrompt && (
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center gap-1">
+                      <Hash className="size-3" /> System Prompt
+                    </div>
+                    <pre className="text-xs text-foreground p-3 rounded-lg bg-muted/30 border border-border whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto font-mono">
+                      {detailAgent.systemPrompt}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Capabilities */}
+                {detailAgent.capabilities && detailAgent.capabilities.length > 0 && (
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center gap-1">
+                      <Sparkles className="size-3" /> Capabilities
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {detailAgent.capabilities.map((cap) => (
+                        <Badge key={cap} variant="outline" className="text-[10px]">
+                          {cap}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+// Simple Label component to avoid extra import
+function Label({ children, ...props }: { children: React.ReactNode; className?: string } & React.LabelHTMLAttributes<HTMLLabelElement>) {
+  return (
+    <label
+      className={`text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 ${props.className || ""}`}
+      {...props}
+    >
+      {children}
+    </label>
   );
 }

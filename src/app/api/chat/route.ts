@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
         if (agent) {
           const agentConfig = {
             name: agent.name,
-            type: agent.type as 'editor' | 'chat' | 'cli' | 'orchestrator',
+            type: agent.type as 'chatbot' | 'assistant' | 'coder' | 'researcher' | 'custom',
             status: agent.status as 'active' | 'inactive' | 'maintenance',
             personaName: agent.personaName || undefined,
             systemPrompt: agent.systemPrompt || undefined,

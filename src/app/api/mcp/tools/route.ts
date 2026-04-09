@@ -6,6 +6,9 @@ const POWERED_BY = 'ZombieCoder-by-SahonSrabon';
 
 export async function GET(request: NextRequest) {
   try {
+    // Auto-seed built-in tools on first access
+    await mcpService.seedBuiltinTools();
+
     const { searchParams } = new URL(request.url);
     const agentId = searchParams.get('agentId') ?? undefined;
     const category = searchParams.get('category') ?? undefined;

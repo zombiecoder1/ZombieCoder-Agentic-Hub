@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import {
   Plus,
@@ -55,6 +56,7 @@ import {
   MessageSquare,
   Bot,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 interface MemoryEntry {
@@ -64,6 +66,7 @@ interface MemoryEntry {
   type?: string;
   agentId?: string;
   importance?: number;
+  agent?: { id: string; name: string } | null;
   createdAt?: string;
   [key: string]: unknown;
 }
@@ -86,12 +89,18 @@ interface SessionMessage {
   timestamp?: string;
 }
 
+interface AgentOption {
+  id: string;
+  name: string;
+}
+
 export function MemoryPanel() {
   const [agentMemories, setAgentMemories] = useState<MemoryEntry[]>([]);
   const [individualMemories, setIndividualMemories] = useState<MemoryEntry[]>(
     []
   );
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
   const [selectedSession, setSelectedSession] = useState<SessionEntry | null>(
     null
   );
@@ -111,10 +120,11 @@ export function MemoryPanel() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [agentRes, indivRes, sessionsRes] = await Promise.allSettled([
+      const [agentRes, indivRes, sessionsRes, agentsRes] = await Promise.allSettled([
         fetch("/api/memory/agent"),
         fetch("/api/memory/individual"),
         fetch("/api/sessions"),
+        fetch("/api/agents"),
       ]);
       if (agentRes.status === "fulfilled" && agentRes.value.ok) {
         const json = await agentRes.value.json();
@@ -130,6 +140,15 @@ export function MemoryPanel() {
         const json = await sessionsRes.value.json();
         const d = json.data;
         setSessions(Array.isArray(d?.sessions) ? d.sessions : Array.isArray(d) ? d : Array.isArray(json) ? json : []);
+      }
+      if (agentsRes.status === "fulfilled" && agentsRes.value.ok) {
+        const json = await agentsRes.value.json();
+        const list = json.data || json || [];
+        setAgents(
+          Array.isArray(list)
+            ? list.map((a: AgentOption) => ({ id: a.id, name: a.name }))
+            : []
+        );
       }
     } catch {
       toast.error("Failed to fetch memory data");
@@ -160,6 +179,10 @@ export function MemoryPanel() {
   };
 
   const handleAddMemory = async () => {
+    if (addType === "agent" && !formData.agentId) {
+      toast.error("Please select an agent");
+      return;
+    }
     if (!formData.content.trim()) {
       toast.error("Content is required");
       return;
@@ -205,11 +228,18 @@ export function MemoryPanel() {
     }
   };
 
+  const getAgentName = (agentId?: string | null): string => {
+    if (!agentId) return "Unknown Agent";
+    const agent = agents.find((a) => a.id === agentId);
+    return agent ? agent.name : agentId.slice(0, 8) + "...";
+  };
+
   const filteredAgentMemories = agentMemories.filter(
     (m) =>
       !searchQuery ||
       m.topic?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.content?.toLowerCase().includes(searchQuery.toLowerCase())
+      m.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      getAgentName(m.agentId).toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const filteredIndividualMemories = individualMemories.filter(
@@ -232,6 +262,20 @@ export function MemoryPanel() {
       className="flex items-start justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
     >
       <div className="flex-1 min-w-0 mr-3">
+        {/* Agent Identity */}
+        {type === "agent" && memory.agentId && (
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <div className="flex items-center justify-center size-5 rounded bg-emerald-500/15">
+              <Bot className="size-3 text-emerald-400" />
+            </div>
+            <span className="text-[10px] font-medium text-emerald-400">
+              {memory.agent?.name || getAgentName(memory.agentId)}
+            </span>
+            <Badge variant="outline" className="text-[8px] px-1 py-0 font-mono text-muted-foreground border-border">
+              {memory.agentId.slice(0, 8)}
+            </Badge>
+          </div>
+        )}
         <div className="flex items-center gap-2 mb-1">
           {memory.topic && (
             <Badge variant="secondary" className="text-[10px] px-1.5">
@@ -337,12 +381,13 @@ export function MemoryPanel() {
               </DialogHeader>
               <div className="space-y-4 py-2">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Store</label>
+                  <Label>Store</Label>
                   <Select
                     value={addType}
-                    onValueChange={(v) =>
-                      setAddType(v as "agent" | "individual")
-                    }
+                    onValueChange={(v) => {
+                      setAddType(v as "agent" | "individual");
+                      setFormData({ ...formData, agentId: "" });
+                    }}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue />
@@ -357,18 +402,41 @@ export function MemoryPanel() {
                 </div>
                 {addType === "agent" && (
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Agent ID</label>
-                    <Input
-                      placeholder="Enter agent ID"
-                      value={formData.agentId}
-                      onChange={(e) =>
-                        setFormData({ ...formData, agentId: e.target.value })
-                      }
-                    />
+                    <Label>Select Agent</Label>
+                    {agents.length === 0 ? (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs text-amber-400">
+                        <AlertCircle className="size-4 shrink-0" />
+                        <span>No agents available. Create an agent first in the Agents panel.</span>
+                      </div>
+                    ) : (
+                      <Select
+                        value={formData.agentId}
+                        onValueChange={(v) =>
+                          setFormData({ ...formData, agentId: v })
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select an agent" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {agents.map((agent) => (
+                            <SelectItem key={agent.id} value={agent.id}>
+                              <div className="flex items-center gap-2">
+                                <Bot className="size-3 text-emerald-400" />
+                                {agent.name}
+                                <span className="text-[9px] font-mono text-muted-foreground">
+                                  ({agent.id.slice(0, 8)})
+                                </span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                 )}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Topic</label>
+                  <Label>Topic</Label>
                   <Input
                     placeholder="e.g., coding preferences"
                     value={formData.topic}
@@ -378,7 +446,7 @@ export function MemoryPanel() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Content</label>
+                  <Label>Content</Label>
                   <Textarea
                     placeholder="Memory content..."
                     value={formData.content}
@@ -406,6 +474,55 @@ export function MemoryPanel() {
         </div>
       </div>
 
+      {/* Memory Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] text-muted-foreground">Agent Memories</p>
+                <div className="text-xl font-bold text-foreground mt-0.5">
+                  {agentMemories.length}
+                </div>
+              </div>
+              <div className="flex items-center justify-center size-8 rounded-lg bg-emerald-500/15">
+                <Brain className="size-4 text-emerald-400" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] text-muted-foreground">Individual Memories</p>
+                <div className="text-xl font-bold text-foreground mt-0.5">
+                  {individualMemories.length}
+                </div>
+              </div>
+              <div className="flex items-center justify-center size-8 rounded-lg bg-cyan-500/15">
+                <FileText className="size-4 text-cyan-400" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] text-muted-foreground">Sessions</p>
+                <div className="text-xl font-bold text-foreground mt-0.5">
+                  {sessions.length}
+                </div>
+              </div>
+              <div className="flex items-center justify-center size-8 rounded-lg bg-amber-500/15">
+                <Clock className="size-4 text-amber-400" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Tabs */}
       <Tabs defaultValue="agent" className="space-y-4">
         <TabsList>
@@ -426,7 +543,13 @@ export function MemoryPanel() {
         {/* Agent Memory Tab */}
         <TabsContent value="agent">
           <Card>
-            <CardContent className="p-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Agent Memory Store</CardTitle>
+              <CardDescription className="text-xs">
+                Memories linked to specific agents — each entry shows the agent identity
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-4 pt-0">
               {loading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-14 w-full" />
@@ -436,6 +559,9 @@ export function MemoryPanel() {
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <Brain className="size-8 mb-2 opacity-30" />
                   <p className="text-sm">No agent memories found</p>
+                  <p className="text-xs mt-1">
+                    {searchQuery ? "Try a different search term" : "Add agent memories using the button above"}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-2 max-h-[500px] overflow-y-auto">
@@ -455,7 +581,13 @@ export function MemoryPanel() {
         {/* Individual Memory Tab */}
         <TabsContent value="individual">
           <Card>
-            <CardContent className="p-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Individual Memory Store</CardTitle>
+              <CardDescription className="text-xs">
+                General memories not tied to a specific agent
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-4 pt-0">
               {loading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-14 w-full" />
@@ -618,5 +750,17 @@ export function MemoryPanel() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+// Simple Label component
+function Label({ children, ...props }: { children: React.ReactNode; className?: string } & React.LabelHTMLAttributes<HTMLLabelElement>) {
+  return (
+    <label
+      className={`text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 ${props.className || ""}`}
+      {...props}
+    >
+      {children}
+    </label>
   );
 }

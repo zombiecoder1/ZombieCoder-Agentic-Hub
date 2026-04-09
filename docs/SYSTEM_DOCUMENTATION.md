@@ -5,27 +5,98 @@
 > **Organization:** Developer Zone  
 > **Location:** Dhaka, Bangladesh  
 > **License:** Proprietary - Local Freedom Protocol  
-> **Last Updated:** April 8, 2026
+> **Last Updated:** April 2026
 
 ---
 
 ## Table of Contents
 
-1. [Ethics & Transparency](#1-ethics--transparency)
-2. [System Overview](#2-system-overview)
+1. [System Overview](#1-system-overview)
+2. [Ethics & Transparency](#2-ethics--transparency)
 3. [Architecture](#3-architecture)
-4. [File Structure](#4-file-structure)
-5. [Database Schema](#5-database-schema)
-6. [Core Modules](#6-core-modules)
-7. [API Reference](#7-api-reference)
-8. [Stock Server (Port 9999)](#8-stock-server-port-9999)
-9. [Configuration](#9-configuration)
-10. [Deployment Guide](#10-deployment-guide)
+4. [Installation Guide](#4-installation-guide)
+5. [Configuration](#5-configuration)
+6. [API Reference](#6-api-reference)
+7. [MCP Configuration](#7-mcp-configuration)
+8. [Provider Management](#8-provider-management)
+9. [Agent Management](#9-agent-management)
+10. [Memory System](#10-memory-system)
 11. [Security Model](#11-security-model)
+12. [Maintenance](#12-maintenance)
+13. [Troubleshooting](#13-troubleshooting)
+14. [System Identity](#14-system-identity)
 
 ---
 
-## 1. Ethics & Transparency
+## 1. System Overview
+
+### What is ZombieCoder Agentic Hub?
+
+ZombieCoder Agentic Hub is a self-hosted AI orchestration platform that provides a unified gateway to multiple AI providers, agent management, persistent memory, tool execution, and an admin dashboard. It is designed as a local-first system with no external data transmission by default.
+
+**Tagline:** যেখানে কোড ও কথা বলে (Where code speaks)
+
+### Key Capabilities
+
+1. **Multi-Provider AI Integration** — Connect to Ollama, OpenAI, Gemini, and llama.cpp simultaneously
+2. **Real-time Streaming** — SSE and WebSocket streaming via the Stock Server on port 9999
+3. **Agent Orchestration** — Create and manage specialized AI agents with unique personas
+4. **Persistent Memory** — SQLite-based memory system for agent and user memories
+5. **MCP Tool Registry** — Extensible tool system with 7 built-in tools and real execution capabilities
+6. **Ethical Framework** — Built-in content safety with 8 validation categories and identity anchoring
+7. **Admin Dashboard** — Full web UI with 7 tabs for system management
+
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Web Dashboard (Next.js :3000)                   │
+│  ┌──────────┐ ┌────────────┐ ┌────────┐ ┌──────┐ ┌────────────┐  │
+│  │ Dashboard│ │ Providers  │ │ Agents │ │ Chat │ │   Memory   │  │
+│  └────┬─────┘ └─────┬──────┘ └───┬────┘ └──┬───┘ └─────┬──────┘  │
+│  ┌────┴─────┐ ┌─────┴──────┐       │        │     ┌─────┴──────┐  │
+│  │MCP Tools │ │  Settings  │       │        │     │  Sessions  │  │
+│  └────┬─────┘ └─────┬──────┘       │        │     └─────┬──────┘  │
+├───────┼──────────────┼──────────────┼────────┼───────────┼─────────┤
+│       │     API Routes (Next.js Route Handlers)                  │   │
+│       │  /api/health  /api/providers  /api/agents  /api/chat    │   │
+│       │  /api/memory  /api/sessions   /api/mcp     /api/settings│   │
+├───────┼──────────────┼──────────────┼────────┼───────────┼─────────┤
+│       ▼              ▼              ▼        ▼           ▼         │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │                    Service Layer                             │    │
+│  │  ProviderGateway   MemoryService   McpService              │    │
+│  │  PromptEngine      EthicsValidator Logger                   │    │
+│  └────────┬──────────────────┬──────────────────┬─────────────┘    │
+│           │                  │                  │                  │
+│           ▼                  ▼                  ▼                  │
+│  ┌────────────────┐ ┌────────────────┐ ┌───────────────────┐    │
+│  │   SQLite DB    │ │  Stock Server  │ │  External AI      │    │
+│  │   (Prisma ORM) │ │  (Bun :9999)   │ │  Providers        │    │
+│  │                │ │  HTTP+WebSocket │ │  Ollama · OpenAI  │    │
+│  │  13 Tables     │ │  SSE · NDJSON   │ │  Gemini · LlamaCpp│    │
+│  └────────────────┘ └────────────────┘ └───────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Technology Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Framework | Next.js 16 (App Router, standalone output) |
+| Language | TypeScript 5 |
+| Database | SQLite via Prisma ORM |
+| UI | Tailwind CSS 4 + shadcn/ui + Radix UI |
+| Streaming Server | Bun HTTP + WebSocket (port 9999) |
+| State Management | Zustand |
+| Icons | Lucide React |
+| Animations | Framer Motion |
+| Reverse Proxy | Caddy (production) |
+| Runtime | Bun or Node.js |
+
+---
+
+## 2. Ethics & Transparency
 
 ### Founding Principles
 
@@ -33,371 +104,1446 @@ ZombieCoder Agentic Hub is built on the following ethical pillars:
 
 | Principle | Implementation |
 |-----------|---------------|
-| **Honesty** | Every response is generated by real AI providers. No simulated, mock, or fabricated data. |
+| **Honesty** | Every response is generated by real AI providers. No simulated, mock, or fabricated data is ever returned. |
 | **Transparency** | System identity is anchored in all prompts. The system always identifies as ZombieCoder. |
 | **Privacy** | Local-first processing. No data leaves the machine without explicit configuration. |
-| **Safety** | Built-in ethics validation blocks harmful, malicious, or unethical requests. |
-| **Accountability** | All API requests are auditable. All tool executions are logged. |
+| **Safety** | A rule-based, deterministic ethics validation engine blocks harmful, malicious, or unethical requests. |
+| **Accountability** | All tool executions are logged. API audit trails are maintained in the database. |
 
 ### What This System Does NOT Do
 
 - **No demo/mock/simulated responses** — All AI responses come from real provider APIs (Ollama, OpenAI, Gemini, llama.cpp)
-- **No hidden SDK usage** — No z-ai-web-dev-sdk or similar proprietary middleware
+- **No external SDK insertion** — No proprietary middleware SDKs are used for core AI operations
 - **No data harvesting** — No telemetry, tracking, or external data collection
-- **No identity deception** — Agents are always anchored to ZombieCoder identity
+- **No identity deception** — Agents are always anchored to the ZombieCoder identity via the prompt engine
 - **No unsafe tool execution** — Shell commands are validated against a whitelist; dangerous patterns are blocked
 
 ### Ethics Validation Engine
 
-Located at `src/lib/ethics.ts`, the ethics module provides:
+Located at `src/lib/ethics.ts`, the ethics module is a deterministic, rule-based system with zero AI/ML dependencies.
 
-- **Input validation** against harmful content patterns
-- **Identity anchoring** — detects and corrects external AI identity injection
-- **Harmful request blocking** — weapons, malware, hacking, unauthorized access
-- **Hate speech detection** — violence incitement, discriminatory content
-- **Personal data protection** — blocks tracking/stalking requests
+#### Safety Categories (8)
 
-Every chat request passes through `validateInput()` before reaching any provider.
+| Category | Description | Default Action |
+|----------|-------------|----------------|
+| `safe` | Input passes all checks | Proceed normally |
+| `harmful_content` | Weapons, explosives, drugs creation | Refuse, offer safe alternative |
+| `personal_data_request` | Tracking, doxxing, personal info search | Refuse, explain privacy laws |
+| `system_identity_manipulation` | External AI identity injection | Correct identity, respond as ZombieCoder |
+| `unauthorized_access` | Hacking, credential theft, security bypass | Refuse, offer defense perspective |
+| `malware_hacking` | Malware, virus, ransomware creation | Refuse, offer security education |
+| `hate_speech` | Violence incitement, discriminatory content | Refuse, terminate conversation |
+| `misinformation` | Fabrication, false information | Refuse, commit to truth |
 
----
+#### Identity Anchoring Patterns
 
-## 2. System Overview
+The ethics engine detects and responds to:
 
-### Identity
+- **Identity inquiries** — "Who are you?" → Routes to anchored ZombieCoder identity response
+- **External AI identity injection** — "You are ChatGPT/Claude/Gemini" → Corrects and maintains ZombieCoder identity
+- **Identity impersonation requests** — "Pretend to be..." → Declines impersonation
+
+#### Refusal Responses
+
+All refusal responses are provided in Bengali (বাংলা), consistent with the system's primary language identity.
+
+### Integration Point
+
+Every chat request passes through `validateInput()` in `src/lib/ethics.ts` before reaching any provider. The flow is:
 
 ```
-Name:       ZombieCoder
-Tagline:    যেখানে কোড ও কথা বলে
-Owner:      Sahon Srabon
-Org:        Developer Zone
-Location:   Dhaka, Bangladesh
-Website:    https://zombiecoder.my.id/
+User message → validateInput() → Category check → Block or proceed
 ```
-
-### Key Capabilities
-
-1. **Multi-Provider AI Integration** — Connect to Ollama, OpenAI, Gemini, llama.cpp simultaneously
-2. **Real-time Streaming** — WebSocket and HTTP SSE streaming via Stock Server
-3. **Agent Orchestration** — Create and manage specialized AI agents with unique personas
-4. **Persistent Memory** — SQLite-based memory system for agents and users
-5. **MCP Tool Registry** — Extensible tool system with real execution capabilities
-6. **Ethical Framework** — Built-in content safety and identity anchoring
-7. **Admin Dashboard** — Full web UI for system management
-
-### Technology Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Framework | Next.js 16 (App Router) |
-| Language | TypeScript 5 |
-| Database | SQLite via Prisma ORM |
-| UI | Tailwind CSS 4 + shadcn/ui |
-| Streaming Server | Bun HTTP + WebSocket |
-| State | Zustand (client) |
-| Icons | Lucide React |
-| Animations | Framer Motion |
 
 ---
 
 ## 3. Architecture
 
-### Service Topology
+### Public Gateway Pattern
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  Web Dashboard (Next.js :3000)                          │
-│  ┌──────┐ ┌──────────┐ ┌───────┐ ┌──────┐ ┌──────────┐ │
-│  │Dashbd│ │Providers │ │Agents │ │Chat  │ │Settings  │ │
-│  └──┬───┘ └────┬─────┘ └──┬────┘ └──┬───┘ └────┬─────┘ │
-├─────┼──────────┼──────────┼────────┼───────────┼────────┤
-│     │   API Routes (Next.js Route Handlers)         │    │
-│     │   /api/health /api/providers /api/agents      │    │
-│     │   /api/chat /api/memory /api/mcp /api/settings│    │
-├─────┼──────────┼──────────┼────────┼───────────┼────────┤
-│     ▼          ▼          ▼        ▼           ▼        │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │  Service Layer                                   │    │
-│  │  ProviderGateway · MemoryService · McpService   │    │
-│  │  PromptEngine · EthicsValidator                  │    │
-│  └────────┬──────────────────┬────────────────────┘    │
-├───────────┼──────────────────┼─────────────────────────┤
-│           ▼                  ▼                          │
-│  ┌──────────────┐   ┌─────────────────────┐           │
-│  │  SQLite DB   │   │  Stock Server       │           │
-│  │  (Prisma)    │   │  (Bun :9999)        │           │
-│  │              │   │  WebSocket + SSE    │           │
-│  └──────────────┘   │  OpenAI/Ollama API  │           │
-│                     └────────┬────────────┘           │
-└──────────────────────────────┼─────────────────────────┘
-                               ▼
-              ┌────────────────────────────────┐
-              │  External AI Providers        │
-              │  Ollama · OpenAI · Gemini     │
-              │  llama.cpp                    │
-              └────────────────────────────────┘
+The system uses a **Public Gateway** pattern — a single entry point for all AI requests that routes through the Provider Gateway. This ensures:
+
+- No direct calls to AI services from the frontend
+- All traffic passes through ethics validation
+- Provider selection is centralized and cached
+- Latency monitoring is built in
+
+### Provider System
+
+**File:** `src/providers/IProvider.ts`
+
+All providers implement the `ILLMProvider` interface:
+
+```typescript
+interface ILLMProvider {
+  readonly type: string;       // e.g. 'ollama', 'openai'
+  readonly name: string;       // e.g. 'Ollama Local'
+  chat(messages, options): Promise<ProviderResponse>;
+  chatStream(messages, options): Promise<StreamChunk>;
+  testConnection(): Promise<ProviderHealth>;
+  getHealth(): ProviderHealth;
+  getModel(): string;
+  dispose(): void;
+}
 ```
 
-### Data Flow: Chat Request
+**Supported Providers:**
+
+| Provider | File | API Endpoint | Auth Method |
+|----------|------|-------------|-------------|
+| Ollama | `OllamaProvider.ts` | `/api/chat` | None (local) |
+| OpenAI | `OpenAIProvider.ts` | `/chat/completions` | Bearer token |
+| Gemini | `GeminiProvider.ts` | `:generateContent` | API key param |
+| llama.cpp | `LlamaCppProvider.ts` | `/completion` | None (local) |
+
+**Provider Factory** (`src/providers/ProviderFactory.ts`): Singleton with instance caching. Key format: `type:endpoint`.
+
+**Provider Gateway** (`src/services/providerGateway.ts`): Smart provider selection with a fallback chain:
 
 ```
-1. User sends message via dashboard
-   ↓
-2. POST /api/chat — validates request body
-   ↓
-3. Ethics validation (src/lib/ethics.ts)
-   - If blocked → 403 with ethics result
-   ↓
-4. Load agent config from database (if agentId provided)
-   ↓
-5. Build system prompt (src/services/promptEngine.ts)
-   - Injects ZombieCoder identity
-   - Adds agent persona and capabilities
-   ↓
-6. ProviderGateway resolves active provider
-   - Database → Environment → System Default
-   ↓
-7. Send to provider (real HTTP request)
-   ↓
-8. Stream or return response
-   ↓
-9. Save conversation to session history
+Specific providerId → Database (isDefault) → Environment variables → Error
 ```
 
----
+Cache TTLs: Settings cache = 2 seconds (configurable), Provider cache = 5 minutes.
 
-## 4. File Structure
+### Agent System
 
-```
-src/
-├── app/
-│   ├── layout.tsx              # Root layout (ThemeProvider, metadata)
-│   ├── page.tsx                # Dashboard (main UI)
-│   ├── globals.css             # Global styles + dark theme
-│   └── api/
-│       ├── health/route.ts     # GET /api/health
-│       ├── status/route.ts     # GET /api/status
-│       ├── metrics/route.ts    # GET /api/metrics
-│       ├── chat/route.ts       # POST /api/chat
-│       ├── providers/          # Provider CRUD + test + activate
-│       ├── agents/             # Agent CRUD
-│       ├── memory/             # Agent + Individual memories
-│       ├── sessions/           # Chat session management
-│       ├── mcp/                # MCP tools, execute, logs, stats
-│       ├── settings/route.ts   # System settings
-│       └── prompt-templates/   # Prompt template listing
-├── components/
-│   ├── ui/                     # shadcn/ui component library
-│   └── dashboard/              # Dashboard components (10 files)
-├── providers/
-│   ├── IProvider.ts            # Provider interface
-│   ├── OllamaProvider.ts       # Ollama REST API
-│   ├── OpenAIProvider.ts       # OpenAI API
-│   ├── GeminiProvider.ts       # Google Gemini API
-│   ├── LlamaCppProvider.ts     # llama.cpp server
-│   └── ProviderFactory.ts      # Factory with caching
-├── services/
-│   ├── providerGateway.ts      # Smart provider routing
-│   ├── promptEngine.ts         # Prompt template system
-│   ├── memoryService.ts        # Memory management
-│   └── mcpService.ts           # MCP tool registry
-├── lib/
-│   ├── db.ts                   # Prisma client
-│   ├── logger.ts               # Structured logging
-│   ├── identity.ts             # System identity (SINGLE SOURCE OF TRUTH)
-│   ├── ethics.ts               # Ethics validation engine
-│   └── utils.ts                # Utility functions
-├── types/
-│   └── index.ts                # TypeScript type definitions
-└── hooks/                      # React hooks
+Agents are configurable AI personas stored in the `Agent` database table. Each agent has:
 
-mini-services/
-└── stock-server/
-    ├── package.json
-    └── index.ts                # Streaming server (:9999)
+- A unique type (`chatbot`, `assistant`, `coder`, `researcher`, `custom`)
+- A persona name and optional custom system prompt
+- Language preferences (primary language, technical language, greeting prefix)
+- Capabilities list
+- Optional provider assignment
 
-prisma/
-└── schema.prisma               # Database schema (13 tables)
-```
+### Memory System
+
+**File:** `src/services/memoryService.ts` (~744 lines)
+
+Three memory tiers:
+
+1. **Agent Memories** — Per-agent persistent memories with topics, priorities, and importance scoring
+2. **Individual Memories** — User-level memories with type categories (`general`, `technical`, `preference`, `fact`)
+3. **Chat Sessions** — Conversation sessions with message history, status tracking (`active`, `closed`, `archived`)
+
+### MCP Tools
+
+**File:** `src/services/mcpService.ts` (~1560 lines)
+
+7 built-in tools with real executors:
+
+| Tool | Category | Auth Required | Description |
+|------|----------|---------------|-------------|
+| `file_read` | file | No | Read file contents (max 10MB) |
+| `file_write` | file | No | Write/create files |
+| `file_list` | file | No | List directory contents |
+| `shell_execute` | shell | No | Execute whitelisted shell commands |
+| `web_search` | web | **Yes** | Web search (requires external API) |
+| `code_analyze` | code | No | Source code quality metrics |
+| `system_info` | system | No | OS, CPU, memory, network info |
 
 ---
 
-## 5. Database Schema
+## 4. Installation Guide
 
-### Tables
+### Prerequisites
 
-| Table | Purpose | Key Fields |
-|-------|---------|-----------|
-| `SystemIdentity` | Read-only system identity | name, version, owner, organization |
-| `AiProvider` | AI provider configurations | name, type, endpoint, model, apiKeyEnvVar, status, isDefault |
-| `Agent` | AI agent configurations | name, type, status, personaName, systemPrompt, config, providerId |
-| `AgentMemory` | Per-agent persistent memories | agentId, content, topic, priority, importance |
-| `IndividualMemory` | User-level memories | content, memoryType, importance |
-| `ChatSession` | Chat conversation sessions | agentId, providerId, title, status |
-| `ChatMessage` | Messages within sessions | sessionId, role, content, model, provider |
-| `McpTool` | MCP tool definitions | name, description, category, inputSchema, requiredAuth |
-| `AgentToolAssignment` | Agent-tool assignments | agentId, toolId |
-| `ToolExecutionLog` | Tool execution audit trail | toolId, agentId, inputParams, outputResult, status |
-| `SystemSetting` | Key-value system settings | key, value, category, isSecret |
-| `ApiAuditLog` | API request audit log | method, path, statusCode, ipAddress |
-| `PromptTemplate` | Reusable prompt templates | name, template, inputVariables, category |
+| Requirement | Minimum Version | Recommended |
+|-------------|----------------|-------------|
+| Bun | 1.3+ | Latest |
+| Node.js | 18+ | 20+ LTS |
+| Git | 2.30+ | Latest |
+| SQLite | Bundled with Prisma | N/A |
+| Caddy (production) | 2.7+ | Latest |
 
----
+### Windows Installation
 
-## 6. Core Modules
+```powershell
+# 1. Clone the repository
+git clone <repository-url> zombiecoder-hub
+cd zombiecoder-hub
 
-### 6.1 Provider System
-
-All providers implement `ILLMProvider` interface:
-
-| Method | Purpose |
-|--------|---------|
-| `chat(messages, options)` | Non-streaming completion |
-| `chatStream(messages, options, onChunk)` | Streaming completion |
-| `testConnection()` | Health check probe |
-| `getHealth()` | Cached health status |
-| `getModel()` | Current model name |
-| `dispose()` | Resource cleanup |
-
-**Supported Providers:** Ollama, OpenAI, Gemini, llama.cpp
-
-### 6.2 Provider Gateway
-
-Fallback chain: `Specific Provider → Database → Environment → System Default (Ollama)`
-
-Features: Settings cache (TTL: 2s), Provider cache (5 min), Latency monitoring.
-
-### 6.3 Prompt Engine
-
-Templates use `{variable}` syntax. Agent prompts inject ZombieCoder identity + persona + capabilities + behavioral rules.
-
-### 6.4 Memory Service
-
-Agent Memories: CRUD, text search, importance scoring, statistics.
-Individual Memories: CRUD, search, type categories.
-Session Management: Create/close/archive, message CRUD, export/import.
-
-### 6.5 MCP Service
-
-7 built-in tools with real execution. Shell whitelist (70+ commands). Dangerous pattern blocking. Agent-tool assignments. Execution logging. Statistics.
-
-### 6.6 Ethics Module
-
-8 validation categories. Rule-based deterministic checks. Identity anchoring. Refusal responses in Bengali.
-
----
-
-## 7. API Reference
-
-Base URL: `/api/...` (relative)
-Custom Header: `X-Powered-By: ZombieCoder-by-SahonSrabon`
-
-### Endpoints Summary
-
-| Endpoint | Methods | Auth | Description |
-|----------|---------|------|-------------|
-| `/api/health` | GET | No | Health check |
-| `/api/status` | GET | No | System status |
-| `/api/metrics` | GET | No | Aggregate metrics |
-| `/api/providers` | GET, POST | No | Provider CRUD |
-| `/api/providers/:id` | GET, DELETE | No | Provider detail/delete |
-| `/api/providers/:id/test` | POST | No | Test connection |
-| `/api/providers/:id/activate` | POST | No | Set as default |
-| `/api/agents` | GET, POST | No | Agent CRUD |
-| `/api/agents/:id` | GET, PUT, DELETE | No | Agent detail/update/delete |
-| `/api/chat` | POST | No | Send message (ethics-validated) |
-| `/api/memory/agent` | GET, POST | No | Agent memory CRUD |
-| `/api/memory/individual` | GET, POST | No | Individual memory CRUD |
-| `/api/sessions` | GET, POST | No | Session management |
-| `/api/mcp/tools` | GET, POST | No | Tool listing/registration |
-| `/api/mcp/execute` | POST | API Key | Tool execution |
-| `/api/mcp/logs` | GET | No | Execution logs |
-| `/api/mcp/stats` | GET | No | Tool statistics |
-| `/api/settings` | GET, PUT | No | System settings |
-| `/api/prompt-templates` | GET | No | Template listing |
-
----
-
-## 8. Stock Server (Port 9999)
-
-Standalone Bun HTTP + WebSocket server for real-time AI streaming.
-
-| Endpoint | Protocol | Description |
-|----------|----------|-------------|
-| GET `/health` | HTTP | Health check |
-| POST `/v1/chat/completions` | HTTP/SSE | OpenAI-compatible |
-| POST `/api/chat` | HTTP/NDJSON | Ollama-compatible |
-| POST `/api/generate` | HTTP/NDJSON | Ollama generate |
-| WS `/` | WebSocket | Bidirectional streaming |
-
-Max pending: 100 requests. Timeout: 3 minutes. CORS enabled.
-
----
-
-## 9. Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | file:./db/custom.db | SQLite path |
-| `OLLAMA_BASE_URL` | http://localhost:11434 | Ollama endpoint |
-| `OLLAMA_DEFAULT_MODEL` | llama3.1:latest | Default model |
-| `OPENAI_API_KEY` | — | OpenAI API key |
-| `GOOGLE_GEMINI_API_KEY` | — | Gemini API key |
-| `UAS_API_KEY` | — | MCP tool auth key |
-| `LOG_LEVEL` | info | Logger level |
-| `PROVIDER_SETTINGS_CACHE_TTL_MS` | 2000 | Cache TTL |
-
-### API Key Management
-
-Keys are referenced by environment variable name in the database, never stored directly. Rotate by changing env vars.
-
----
-
-## 10. Deployment Guide
-
-```bash
-# Install
+# 2. Install dependencies
 bun install
 
-# Database setup
+# 3. Generate Prisma client and push schema to database
 bun run db:push
 
-# Start Stock Server
-cd mini-services/stock-server && bun run dev &
+# 4. Create environment file
+copy .env.example .env
+# Edit .env with your settings (see Configuration section)
 
-# Start Application
-cd ../.. && bun run dev
+# 5. Start the Stock Server (optional, for streaming)
+cd mini-services\stock-server
+bun install
+bun run dev
+# Stock Server starts on port 9999
+
+# 6. In a new terminal, start the development server
+cd ..\..
+bun run dev
+# Next.js starts on http://localhost:3000
+```
+
+### Linux Installation
+
+```bash
+# 1. Clone the repository
+git clone <repository-url> zombiecoder-hub
+cd zombiecoder-hub
+
+# 2. Install dependencies
+bun install
+
+# 3. Generate Prisma client and push schema to database
+bun run db:push
+
+# 4. Create environment file
+cp .env.example .env
+# Edit .env with your settings (see Configuration section)
+
+# 5. Start the Stock Server (optional, for streaming)
+cd mini-services/stock-server && bun install && bun run dev &
+# Stock Server starts on port 9999
+
+# 6. Start the development server
+cd ../..
+bun run dev
+# Next.js starts on http://localhost:3000
+```
+
+### Production Build and Start
+
+```bash
+# 1. Build the Next.js standalone bundle
+bun run build
+
+# 2. Start the production server
+bun run start
+# Listens on port 3000 using the standalone build
+```
+
+The `build` script in `package.json` performs:
+```bash
+next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/
+```
+
+This creates a self-contained production bundle in `.next/standalone/`.
+
+### Production with Caddy
+
+The project includes a `Caddyfile` that reverse-proxies port 81 to the Next.js server on port 3000, with support for dynamic port transformation:
+
+```
+:81 {
+    @transform_port_query {
+        query XTransformPort=*
+    }
+    handle @transform_port_query {
+        reverse_proxy localhost:{query.XTransformPort}
+    }
+    handle {
+        reverse_proxy localhost:3000
+    }
+}
 ```
 
 ### Health Verification
 
 ```bash
+# Check Next.js application health
 curl http://localhost:3000/api/health
+
+# Check Stock Server health
 curl http://localhost:9999/health
+
+# Check system status
 curl http://localhost:3000/api/status
+
+# Check aggregate metrics
+curl http://localhost:3000/api/metrics
 ```
+
+---
+
+## 5. Configuration
+
+### Environment Variables
+
+Create a `.env` file in the project root. All variables are optional (the system works with defaults).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `file:./db/custom.db` | SQLite database file path |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server endpoint |
+| `OLLAMA_DEFAULT_MODEL` | `llama3.1:latest` | Default model for Ollama provider |
+| `OPENAI_API_KEY` | — | OpenAI API key |
+| `GOOGLE_GEMINI_API_KEY` | — | Google Gemini API key |
+| `UAS_API_KEY` | — | API key for authenticated MCP tool execution |
+| `SEARCH_API_KEY` | — | Web search API key (for `web_search` tool) |
+| `SEARCH_API_ENDPOINT` | — | Web search API endpoint URL |
+| `LOG_LEVEL` | `info` | Logging level: `debug`, `info`, `warn`, `error`, `fatal` |
+| `PROVIDER_SETTINGS_CACHE_TTL_MS` | `2000` | Provider settings cache TTL in milliseconds |
+| `PROVIDER_LATENCY_DEBUG` | `false` | Set to `true` for detailed latency logging |
+| `NODE_ENV` | `development` | Node environment: `development` or `production` |
+
+### Provider Configuration
+
+Providers are stored in the `AiProvider` database table. Configuration is stored as JSON in the `config` field:
+
+```json
+{
+  "temperature": 0.7,
+  "maxTokens": 2048,
+  "maxConnections": 10,
+  "timeoutMs": 60000
+}
+```
+
+API keys are **never stored directly** in the database. Instead, the `apiKeyEnvVar` field stores the environment variable name that contains the key. For example, setting `apiKeyEnvVar` to `OPENAI_API_KEY` will cause the system to read `process.env.OPENAI_API_KEY` at runtime.
+
+### Agent Configuration
+
+Agents store configuration as JSON in the `config` field:
+
+```json
+{
+  "maxTokens": 4096,
+  "temperature": 0.8,
+  "capabilities": ["code_generation", "file_management", "web_search"],
+  "languagePreferences": {
+    "greetingPrefix": "হ্যালো",
+    "primaryLanguage": "Bengali",
+    "technicalLanguage": "English"
+  },
+  "systemInstructions": "Focus on TypeScript and React development",
+  "model": "llama3.1:latest",
+  "metadata": {}
+}
+```
+
+### System Settings
+
+System settings are stored in the `SystemSetting` table via `PUT /api/settings`. Settings support categories (`general`, `provider`, `security`, `performance`) and a `isSecret` flag that masks values in API responses.
+
+---
+
+## 6. API Reference
+
+All API responses include:
+
+- `success: boolean` — Whether the request succeeded
+- `data: T` — Response payload (on success)
+- `error: string` — Error message (on failure)
+- `timestamp: string` — ISO 8601 timestamp
+
+All responses include the header: `X-Powered-By: ZombieCoder-by-SahonSrabon`
+
+### System Endpoints
+
+#### `GET /api/health`
+
+Health check with service status.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "version": "1.0.0",
+    "uptime": 3600,
+    "services": {
+      "database": "connected",
+      "stockServer": "connected",
+      "providers": { "ollama": "active" }
+    },
+    "timestamp": "2026-04-08T12:00:00.000Z"
+  }
+}
+```
+
+#### `GET /api/status`
+
+System status with identity, uptime, active provider, and entity counts.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "identity": {
+      "name": "ZombieCoder",
+      "version": "1.0.0",
+      "tagline": "যেখানে কোড ও কথা বলে",
+      "owner": "Sahon Srabon",
+      "organization": "Developer Zone"
+    },
+    "uptime": 3600,
+    "activeProvider": { "name": "Ollama Local", "type": "ollama", "model": "llama3.1:latest" },
+    "counts": {
+      "providers": 2,
+      "agents": 5,
+      "sessions": 12,
+      "memories": 47
+    }
+  }
+}
+```
+
+#### `GET /api/metrics`
+
+Aggregate metrics across all system entities.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "providers": { "total": 2 },
+    "agents": { "total": 5 },
+    "sessions": { "total": 12 },
+    "memories": { "agent": 30, "individual": 17, "total": 47 },
+    "tools": { "totalExecutions": 150, "successRate": "94.0%" }
+  }
+}
+```
+
+### Provider Endpoints
+
+#### `GET /api/providers`
+
+List all providers with health status.
+
+#### `POST /api/providers`
+
+Create a new provider.
+
+**Request:**
+```json
+{
+  "name": "Ollama Local",
+  "type": "ollama",
+  "endpoint": "http://localhost:11434",
+  "model": "llama3.1:latest",
+  "temperature": 0.7,
+  "maxTokens": 2048
+}
+```
+
+**Valid types:** `ollama`, `openai`, `gemini`, `llamacpp`
+
+#### `GET /api/providers/:id`
+
+Get a single provider by ID.
+
+#### `PUT /api/providers/:id`
+
+Update a provider. Supports updating `name`, `endpoint`, `model`, `apiKeyEnvVar`, `temperature`, `maxTokens`, `timeoutMs`.
+
+Invalidates the provider gateway cache after update.
+
+#### `DELETE /api/providers/:id`
+
+Delete a provider and dispose its cached instance.
+
+#### `POST /api/providers/:id/test`
+
+Test provider connectivity. Returns fresh health data and updates the database.
+
+#### `POST /api/providers/:id/activate`
+
+Set a provider as the active default. Unsets all other providers' default status.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": { "activated": true, "providerId": "...", "providerName": "Ollama Local" }
+}
+```
+
+#### `POST /api/providers/:id/:action`
+
+Generic provider action endpoint. Actions: `test`, `activate`.
+
+### Agent Endpoints
+
+#### `GET /api/agents`
+
+List all agents with provider info, memory counts, session counts, and tool assignment counts.
+
+#### `POST /api/agents`
+
+Create a new agent.
+
+**Request:**
+```json
+{
+  "name": "Code Assistant",
+  "type": "coder",
+  "status": "active",
+  "personaName": "CodeBot",
+  "systemPrompt": "You are a coding expert...",
+  "description": "Specialized coding assistant",
+  "config": {
+    "maxTokens": 4096,
+    "temperature": 0.7,
+    "capabilities": ["code_generation", "code_review"],
+    "languagePreferences": {
+      "primaryLanguage": "Bengali",
+      "technicalLanguage": "English"
+    }
+  },
+  "providerId": "optional-provider-id"
+}
+```
+
+**Valid types:** `chatbot`, `assistant`, `coder`, `researcher`, `custom`  
+**Valid statuses:** `active`, `inactive`, `maintenance`
+
+#### `GET /api/agents/:id`
+
+Get a single agent with provider details, recent memories, session count, and tool assignments.
+
+#### `PUT /api/agents/:id`
+
+Update an agent. All fields are optional in the request body.
+
+#### `DELETE /api/agents/:id`
+
+Delete an agent. Cascading deletes remove associated memories and tool assignments.
+
+### Chat Endpoint
+
+#### `POST /api/chat`
+
+Send a chat message. Passes through ethics validation before reaching any provider.
+
+**Request:**
+```json
+{
+  "messages": [
+    { "role": "system", "content": "You are helpful." },
+    { "role": "user", "content": "Write a function in TypeScript" }
+  ],
+  "agentId": "optional-agent-id",
+  "providerId": "optional-provider-id",
+  "temperature": 0.7,
+  "maxTokens": 2048
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "content": "function hello() { ... }",
+    "model": "llama3.1:latest",
+    "provider": "ollama",
+    "tokenCount": 150,
+    "latencyMs": 1200,
+    "finishReason": "stop"
+  }
+}
+```
+
+**Response (403) — Ethics blocked:**
+```json
+{
+  "success": false,
+  "error": "Content blocked by ethical guidelines",
+  "ethicsResult": {
+    "category": "malware_hacking",
+    "reason": "Malware creation request"
+  }
+}
+```
+
+### Session Endpoints
+
+#### `GET /api/sessions`
+
+List sessions. Query params: `limit` (number), `status` (`active`/`closed`/`archived`).
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": { "sessions": [...], "total": 12 }
+}
+```
+
+#### `POST /api/sessions`
+
+Create a new session.
+
+**Request:**
+```json
+{
+  "agentId": "optional-agent-id",
+  "providerId": "optional-provider-id",
+  "title": "Code Review Session"
+}
+```
+
+#### `GET /api/sessions/:id`
+
+Get a single session with its messages.
+
+#### `DELETE /api/sessions/:id`
+
+Delete a session and all its messages (cascading).
+
+#### `POST /api/sessions/:id/close`
+
+Close an active session (sets status to `closed`).
+
+#### `POST /api/sessions/:id/messages`
+
+Add a message to a session.
+
+**Request:**
+```json
+{
+  "role": "user",
+  "content": "How do I implement auth?",
+  "model": "llama3.1:latest",
+  "provider": "ollama",
+  "tokenCount": 25,
+  "latencyMs": 150,
+  "metadata": {}
+}
+```
+
+**Valid roles:** `system`, `user`, `assistant`, `tool`
+
+### Memory Endpoints
+
+#### `GET /api/memory/agent`
+
+List agent memories. Query params: `agentId` (optional — if omitted, lists all), `limit`, `topic`.
+
+#### `POST /api/memory/agent`
+
+Add an agent memory.
+
+**Request:**
+```json
+{
+  "agentId": "agent-uuid",
+  "content": "User prefers TypeScript over JavaScript",
+  "topic": "preference",
+  "priority": "high",
+  "importance": 4.5,
+  "metadata": {}
+}
+```
+
+#### `PUT /api/memory/agent/:id`
+
+Update an agent memory. Supports partial updates.
+
+#### `DELETE /api/memory/agent/:id`
+
+Delete an agent memory.
+
+#### `POST /api/memory/agent/search`
+
+Search agent memories by text query.
+
+**Request:**
+```json
+{
+  "agentId": "agent-uuid",
+  "query": "TypeScript preferences",
+  "limit": 10,
+  "topic": "preference"
+}
+```
+
+#### `GET /api/memory/individual`
+
+List individual memories. Query params: `limit`, `type` (`general`/`technical`/`preference`/`fact`).
+
+#### `POST /api/memory/individual`
+
+Add an individual memory.
+
+**Request:**
+```json
+{
+  "content": "User's project uses Next.js 16",
+  "memoryType": "technical",
+  "importance": 4.0,
+  "metadata": {}
+}
+```
+
+#### `PUT /api/memory/individual/:id`
+
+Update an individual memory.
+
+#### `DELETE /api/memory/individual/:id`
+
+Delete an individual memory.
+
+### MCP Tool Endpoints
+
+#### `GET /api/mcp/tools`
+
+List tools. Query params: `agentId`, `category`.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": { "tools": [...], "count": 7 }
+}
+```
+
+#### `POST /api/mcp/tools`
+
+Register a new tool.
+
+**Request:**
+```json
+{
+  "name": "my_custom_tool",
+  "description": "A custom tool",
+  "category": "general",
+  "inputSchema": {
+    "type": "object",
+    "properties": { "param1": { "type": "string" } },
+    "required": ["param1"]
+  },
+  "requiredAuth": false,
+  "enabled": true
+}
+```
+
+Returns `409 Conflict` if a tool with the same name already exists.
+
+#### `GET /api/mcp/tools/:name`
+
+Get a single tool by name.
+
+#### `PUT /api/mcp/tools/:name`
+
+Update a tool.
+
+#### `DELETE /api/mcp/tools/:name`
+
+Delete a tool.
+
+#### `POST /api/mcp/execute`
+
+Execute a tool. If the tool has `requiredAuth: true`, the request must include an `X-API-Key` header matching `UAS_API_KEY`.
+
+**Request:**
+```json
+{
+  "agentId": "optional-agent-id",
+  "toolName": "file_read",
+  "input": { "path": "/path/to/file.txt", "encoding": "utf-8" },
+  "sessionId": "optional-session-id"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "success": true,
+    "output": "file contents here...",
+    "executionMs": 45,
+    "toolName": "file_read"
+  }
+}
+```
+
+Returns `401` if auth required but missing/invalid, `404` if tool not found, `422` if execution fails.
+
+#### `GET /api/mcp/logs`
+
+Get tool execution logs. Query params: `toolId`, `agentId`, `status` (`success`/`error`/`timeout`), `limit` (max 200).
+
+#### `GET /api/mcp/stats`
+
+Get tool usage statistics.
+
+**Response includes:**
+- `totalTools`, `enabledTools`, `totalExecutions`
+- `successRate` (0.0 - 1.0)
+- `avgExecutionMs`
+- `byCategory` — stats per tool category
+- `topTools` — top 10 tools by execution count
+
+#### `GET /api/mcp/config`
+
+Get editor configuration for MCP integration. Query param: `workspace` (path).
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "vscode": { "version": "0.1.0", "tools": [...], "server": {...}, "settings": {...} },
+    "qoder": { "mcpVersion": "2025-03-26", "tools": [...], "serverInfo": {...} },
+    "universal": { "mcpServer": {...}, "workspace": "...", "tools": [...] }
+  }
+}
+```
+
+### Settings Endpoints
+
+#### `GET /api/settings`
+
+List all system settings. Secret values are masked as `••••••••`.
+
+#### `PUT /api/settings`
+
+Create or update a system setting (upsert).
+
+**Request:**
+```json
+{
+  "key": "theme",
+  "value": "dark",
+  "description": "UI theme preference",
+  "category": "general",
+  "isSecret": false
+}
+```
+
+### Prompt Template Endpoints
+
+#### `GET /api/prompt-templates`
+
+List all built-in prompt templates. Query param: `name` to get a specific template.
+
+Returns templates from `src/services/promptEngine.ts`:
+
+| Template Name | Category | Variables |
+|---------------|----------|-----------|
+| `ZOMBIECODER_IDENTITY` | identity | (none — dynamic) |
+| `CODE_GENERATION_TEMPLATE` | code | `language`, `requirements`, `context` |
+| `CHAT_CONVERSATION_TEMPLATE` | chat | `context`, `tone` |
+| `ETHICAL_DECISION_TEMPLATE` | ethical | `content` |
+
+---
+
+## 7. MCP Configuration
+
+### Built-in Tools
+
+7 built-in tools are registered at startup via `mcpService.seedBuiltinTools()`:
+
+| Tool | Category | Auth | Input Parameters | Executor |
+|------|----------|------|-----------------|----------|
+| `file_read` | file | No | `path` (required), `encoding` | Real filesystem read, 10MB limit |
+| `file_write` | file | No | `path` (required), `content` (required), `encoding` | Real filesystem write, auto-creates dirs |
+| `file_list` | file | No | `path`, `recursive`, `extensions` | Real directory listing, skips hidden files |
+| `shell_execute` | shell | No | `command` (required), `timeout` (1s-120s), `cwd` | Whitelisted command execution |
+| `web_search` | web | **Yes** | `query` (required), `limit` | Requires `SEARCH_API_KEY` + `SEARCH_API_ENDPOINT` |
+| `code_analyze` | code | No | `path` (required), `includeMetrics` | Source code metrics analysis |
+| `system_info` | system | No | `sections` | OS, CPU, memory, network, runtime, process |
+
+### Custom Tool Registration
+
+Register custom tools via `POST /api/mcp/tools`. Custom tools are stored in the database but require a custom executor to be implemented in the `McpService` class. Without an executor, execution attempts return an error:
+
+```json
+{
+  "success": false,
+  "error": "No executor registered for tool 'my_tool'. This tool may be a custom tool that requires a custom handler."
+}
+```
+
+### Editor Configuration
+
+The MCP config endpoint (`GET /api/mcp/config`) generates editor-specific configurations:
+
+#### VS Code Configuration
+
+```json
+{
+  "version": "0.1.0",
+  "tools": [...],
+  "server": {
+    "name": "zombiecoder-mcp",
+    "version": "1.0.0",
+    "workspace": "/path/to/project"
+  },
+  "settings": {
+    "autoApprove": ["file_read", "file_list", "system_info"],
+    "requireConfirmation": ["file_write", "shell_execute", "web_search"],
+    "blocked": []
+  }
+}
+```
+
+#### Qoder Configuration
+
+```json
+{
+  "mcpVersion": "2025-03-26",
+  "protocolVersion": "1.0",
+  "serverInfo": { "name": "zombiecoder-mcp", "version": "1.0.0" },
+  "capabilities": { "tools": { "listChanged": false } },
+  "tools": [...],
+  "workspace": "/path/to/project"
+}
+```
+
+#### Universal Configuration
+
+```json
+{
+  "mcpServer": {
+    "name": "zombiecoder-mcp",
+    "version": "1.0.0",
+    "transport": "stdio"
+  },
+  "workspace": "/path/to/project",
+  "tools": [...],
+  "categories": ["file", "shell", "web", "code", "system"]
+}
+```
+
+### Shell Command Whitelist
+
+The `shell_execute` tool validates commands against a whitelist defined in `src/services/mcpService.ts`. Commands are checked by exact match first, then by base command (first token).
+
+**Whitelisted base commands (35+):**
+
+| Category | Commands |
+|----------|----------|
+| **File system** | `ls`, `pwd`, `cat`, `head`, `tail`, `tree`, `mkdir`, `touch`, `file`, `stat`, `find` |
+| **System info** | `whoami`, `hostname`, `date`, `uname`, `which`, `env`, `uptime`, `df`, `du`, `free`, `ps` |
+| **Text processing** | `echo`, `wc`, `grep`, `rg` |
+| **Networking** | `curl` |
+| **Package managers** | `npm`, `npx`, `pnpm`, `yarn`, `bun`, `pip` |
+| **Runtimes** | `node`, `python`, `python3` |
+| **Version control** | `git` (status, log, diff, branch, remote, show, rev-parse) |
+| **Containers** | `docker` (ps, images) |
+
+### Dangerous Pattern Blocking
+
+The following patterns are always blocked, even if the base command is whitelisted:
+
+| Pattern | Risk |
+|---------|------|
+| `rm -rf` | Destructive file deletion |
+| `mkfs` | Filesystem formatting |
+| `dd if=` | Raw disk write |
+| `> /dev/` | Direct device write |
+| `chmod 777` | Insecure permissions |
+| `sudo` | Privilege escalation |
+| `su ` | User switching |
+| `passwd` | Password manipulation |
+| `shutdown` / `reboot` | System shutdown |
+| `kill -9` / `pkill` | Process termination |
+| `:(){ :|:& };:` | Fork bomb |
+| `wget ... | bash` / `curl ... | sh` | Remote code execution |
+
+---
+
+## 8. Provider Management
+
+### Supported Provider Types
+
+| Type | Endpoint | Protocol | Auth | Streaming |
+|------|----------|----------|------|-----------|
+| `ollama` | `http://localhost:11434` | HTTP REST | None | NDJSON |
+| `openai` | `https://api.openai.com/v1` | HTTP REST | Bearer token | SSE |
+| `gemini` | Google AI API | HTTP REST | API key | SSE |
+| `llamacpp` | `http://localhost:8080` | HTTP REST | None | Custom |
+
+### Adding a Provider
+
+1. **Via Dashboard:** Navigate to the Providers tab, fill in the form, and click Create
+2. **Via API:**
+
+```bash
+curl -X POST http://localhost:3000/api/providers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Ollama",
+    "type": "ollama",
+    "endpoint": "http://localhost:11434",
+    "model": "llama3.1:latest"
+  }'
+```
+
+### Testing a Provider
+
+```bash
+curl -X POST http://localhost:3000/api/providers/{id}/test
+```
+
+Returns health status, latency in milliseconds, and error details if any.
+
+### Activating a Provider
+
+```bash
+curl -X POST http://localhost:3000/api/providers/{id}/activate
+```
+
+This sets `isDefault: true` on the target provider and `isDefault: false` on all others.
+
+### Deleting a Provider
+
+```bash
+curl -X DELETE http://localhost:3000/api/providers/{id}
+```
+
+Disposes the cached provider instance and removes it from the database.
+
+### Provider Cache Behavior
+
+- Provider instances are cached in `ProviderGateway` with a 5-minute TTL
+- Settings cache (which provider is active) has a 2-second TTL (configurable via `PROVIDER_SETTINGS_CACHE_TTL_MS`)
+- Cache is invalidated when a provider is updated or deleted
+- The `dispose()` method clears all caches and disposes all provider instances
+
+---
+
+## 9. Agent Management
+
+### Agent Types
+
+| Type | Description |
+|------|-------------|
+| `chatbot` | General conversational agent |
+| `assistant` | Task-oriented assistant |
+| `coder` | Code generation and review specialist |
+| `researcher` | Information retrieval and analysis |
+| `custom` | User-defined agent type |
+
+### Agent Statuses
+
+| Status | Description |
+|--------|-------------|
+| `active` | Agent is available for use |
+| `inactive` | Agent is disabled but not deleted |
+| `maintenance` | Agent is under maintenance |
+
+### System Prompt Building
+
+When a chat request includes an `agentId`, the prompt engine (`src/services/promptEngine.ts`) builds a system prompt in this order:
+
+1. **ZombieCoder Identity** — Always injected first from `src/lib/identity.ts`
+2. **Persona Name** — If the agent has a `personaName`
+3. **Agent Instructions** — Custom `systemPrompt` override
+4. **Language Preferences** — Primary language, technical language, greeting prefix
+5. **Capabilities** — Numbered list of agent capabilities
+6. **Behavioral Rules** — Standard rules (always appended):
+   - Always identify as ZombieCoder
+   - Be honest about capabilities and limitations
+   - Use Bengali unless user prefers English
+   - No repetition in responses
+   - No hallucination
+7. **Additional Context** — Optional extra context
+
+### Creating an Agent via API
+
+```bash
+curl -X POST http://localhost:3000/api/agents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Code Helper",
+    "type": "coder",
+    "personaName": "CodeBot",
+    "systemPrompt": "Focus on clean, production-ready code",
+    "description": "A coding specialist agent",
+    "config": {
+      "maxTokens": 4096,
+      "temperature": 0.7,
+      "capabilities": ["code_generation", "code_review", "debugging"],
+      "languagePreferences": {
+        "primaryLanguage": "Bengali",
+        "technicalLanguage": "English"
+      }
+    }
+  }'
+```
+
+### Deleting an Agent
+
+Deleting an agent cascades to remove:
+- All associated `AgentMemory` records
+- All associated `AgentToolAssignment` records
+- Chat sessions are NOT deleted (they retain the `agentId` reference)
+
+---
+
+## 10. Memory System
+
+### Agent Memories
+
+Stored in the `AgentMemory` table. Each memory belongs to a specific agent.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | String | Memory text content |
+| `topic` | String? | Category/tag for organization |
+| `priority` | String | `low`, `normal`, `high`, `critical` |
+| `importance` | Float | 1.0 - 5.0 importance score |
+| `sessionId` | String? | Source session reference |
+| `metadata` | JSON | Additional context |
+
+Operations:
+- **CRUD** via `/api/memory/agent` and `/api/memory/agent/:id`
+- **Search** via `POST /api/memory/agent/search` — Text-based search with optional topic filter
+
+### Individual Memories
+
+Stored in the `IndividualMemory` table. User-level memories not tied to a specific agent.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | String | Memory text content |
+| `memoryType` | String | `general`, `technical`, `preference`, `fact` |
+| `importance` | Float | 1.0 - 5.0 importance score |
+| `metadata` | JSON | Additional context |
+
+Operations:
+- **CRUD** via `/api/memory/individual` and `/api/memory/individual/:id`
+
+### Chat Sessions
+
+Stored in `ChatSession` and `ChatMessage` tables.
+
+**Session statuses:** `active`, `closed`, `archived`
+
+**Message roles:** `system`, `user`, `assistant`, `tool`
+
+Operations:
+- Create sessions: `POST /api/sessions`
+- List sessions: `GET /api/sessions?limit=N&status=active`
+- Get session: `GET /api/sessions/:id` (includes messages)
+- Close session: `POST /api/sessions/:id/close`
+- Delete session: `DELETE /api/sessions/:id` (cascades messages)
+- Add message: `POST /api/sessions/:id/messages`
+
+### Export and Import
+
+The `MemoryService` class (`src/services/memoryService.ts`) provides export/import methods at the service level for backing up and restoring agent memories, individual memories, and session data.
 
 ---
 
 ## 11. Security Model
 
-- MCP tool execution requires `X-API-Key` header
-- System identity is read-only and anchored
-- Shell commands validated against whitelist
-- File operations limited to 10MB
-- All executions fully logged
-- CORS enabled for dashboard access
-- No external data transmission by default
+### Layered Security
+
+1. **Ethics Validation** — Rule-based content filtering on all chat inputs (`src/lib/ethics.ts`)
+2. **Identity Anchoring** — System identity injected into every agent prompt, external identity injection detection
+3. **Shell Command Whitelist** — Explicit allowlist of 35+ base commands with dangerous pattern blocking
+4. **API Key Authentication** — MCP tools with `requiredAuth: true` require `X-API-Key` header
+5. **Secret Masking** — System settings with `isSecret: true` return masked values in API responses
+6. **File Size Limits** — File operations limited to 10MB
+7. **Execution Logging** — All tool executions logged with input, output, status, and timing
+8. **Cascading Deletes** — Agent deletion removes associated memories and tool assignments
+
+### Shell Command Security
+
+The `isShellCommandAllowed()` function in `src/services/mcpService.ts` implements:
+
+1. **Whitespace trimming** — Empty commands rejected
+2. **Dangerous pattern scan** — 15+ regex patterns for destructive operations (see Section 7)
+3. **Exact whitelist match** — Full command string checked first
+4. **Base command match** — First token of the command checked against whitelist
+5. **Execution limits** — Timeout range: 1 second to 120 seconds; max buffer: 10MB
+
+### API Key Handling
+
+- Keys are stored as environment variable names, never actual values
+- At runtime, the system reads `process.env[apiKeyEnvVar]` to get the actual key
+- The `UAS_API_KEY` environment variable protects MCP tool execution
+- If `UAS_API_KEY` is not set and a tool requires auth, the system returns `503` with a configuration error
+
+### CORS Configuration
+
+- Next.js API routes inherit Next.js default CORS
+- Stock Server (port 9999) has `Access-Control-Allow-Origin: *` for all endpoints
+- Production deployments should configure CORS via the Caddy reverse proxy
 
 ---
 
-## Contact
+## 12. Maintenance
 
-**Owner:** Sahon Srabon · **Organization:** Developer Zone  
-**Email:** infi@zombiecoder.my.id · **Website:** https://zombiecoder.my.id/  
-**Phone:** +880 1323-626282 · **Location:** Dhaka, Bangladesh
+### Database Backup
+
+The SQLite database is stored at `db/custom.db` (configurable via `DATABASE_URL`).
+
+```bash
+# Backup the database
+cp db/custom.db db/custom.db.backup-$(date +%Y%m%d-%H%M%S)
+
+# On Linux with cron (daily at 2 AM)
+0 2 * * * cp /path/to/zombiecoder-hub/db/custom.db /path/to/backups/custom.db.$(date +\%Y\%m\%d)
+```
+
+### Database Reset
+
+```bash
+# Reset the database (destructive — all data lost)
+bun run db:reset
+
+# Push schema changes without data loss
+bun run db:push
+
+# Run migrations
+bun run db:migrate
+```
+
+### Log Management
+
+The application logs to stdout/stderr. The dev server script redirects to `dev.log` and the production script to `server.log`.
+
+```bash
+# Development logs
+tail -f dev.log
+
+# Production logs
+tail -f server.log
+
+# Log rotation (Linux with logrotate)
+# Create /etc/logrotate.d/zombiecoder:
+/path/to/zombiecoder-hub/server.log {
+    daily
+    rotate 14
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+```
+
+**Log Levels:** `debug`, `info`, `warn`, `error`, `fatal` (controlled by `LOG_LEVEL` env var)
+
+### Updating Providers
+
+To update a provider's configuration:
+
+1. **Via API:** `PUT /api/providers/:id` with the fields to update
+2. **Via Dashboard:** Navigate to Providers tab, edit, and save
+
+After update, the provider gateway cache is automatically invalidated.
+
+### Clearing Provider Cache
+
+The provider cache is automatically managed with TTLs. If manual clearing is needed, restart the application.
+
+### Updating the Application
+
+```bash
+# Pull latest changes
+git pull origin main
+
+# Install new dependencies
+bun install
+
+# Rebuild for production
+bun run build
+
+# Restart production server
+bun run start
+```
 
 ---
 
-*This documentation reflects the actual system implementation. No simulated or placeholder content included.*
+## 13. Troubleshooting
+
+### Common Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `No AI provider configured` | No active provider in database and no `OLLAMA_BASE_URL` env var | Add a provider via Dashboard or API, or set `OLLAMA_BASE_URL` |
+| `Provider not found: {id}` | Invalid or deleted provider ID | Check the provider exists via `GET /api/providers` |
+| `messages array is required` | Chat request body missing `messages` field | Send `{ "messages": [{ "role": "user", "content": "..." }] }` |
+| `Content blocked by ethical guidelines` | Input matched a harmful pattern | Review the ethics category and reason in the response |
+| `Command not allowed by security whitelist` | Shell command not whitelisted or contains dangerous patterns | Check the whitelist in `src/services/mcpService.ts` |
+| `Invalid or missing API key` | MCP tool requires auth but `X-API-Key` header missing or wrong | Set `UAS_API_KEY` env var and include matching `X-API-Key` header |
+| `Web search is not configured` | `web_search` tool used without `SEARCH_API_KEY` and `SEARCH_API_ENDPOINT` | Set both environment variables |
+| `File too large: X MB exceeds 10MB limit` | File read exceeds 10MB limit | Use files under 10MB |
+| `Command timed out after Xms` | Shell command exceeded timeout | Increase timeout (max 120000ms) or optimize command |
+| `Tool 'X' not found` | MCP tool not registered in database | Register the tool via `POST /api/mcp/tools` |
+| `Tool 'X' is already assigned to agent` | Duplicate tool-agent assignment | Check existing assignments first |
+| `P2022: Unique constraint failed` | Duplicate key in database | Use a different name/identifier |
+
+### Health Check Failures
+
+```bash
+# Check if Next.js is running
+curl http://localhost:3000/api/health
+
+# Check if Stock Server is running
+curl http://localhost:9999/health
+
+# Check database connectivity
+# If /api/health shows database: "disconnected", check:
+# 1. DATABASE_URL is set correctly in .env
+# 2. db/custom.db file exists
+# 3. Run: bun run db:push
+```
+
+### Provider Connection Issues
+
+```bash
+# Test Ollama connectivity
+curl http://localhost:11434/api/tags
+
+# Test OpenAI connectivity (replace YOUR_KEY)
+curl https://api.openai.com/v1/models \
+  -H "Authorization: Bearer YOUR_KEY"
+
+# Test provider via API
+curl -X POST http://localhost:3000/api/providers/{id}/test
+```
+
+### Lint Errors
+
+```bash
+# Run ESLint
+bun run lint
+
+# Expected: zero errors (verified after Task ID: 11 audit)
+```
+
+---
+
+## 14. System Identity
+
+### Identity Anchor
+
+The ZombieCoder identity is the **single source of truth** for the system, defined in `src/lib/identity.ts`:
+
+```typescript
+export const SYSTEM_IDENTITY: SystemIdentity = {
+  id: 'zombiecoder-v1',
+  name: 'ZombieCoder',
+  version: '1.0.0',
+  tagline: 'যেখানে কোড ও কথা বলে',
+  owner: 'Sahon Srabon',
+  organization: 'Developer Zone',
+  address: '235 South Pirarbag, Amtala Bazar, Mirpur - 60 feet',
+  location: 'Dhaka, Bangladesh',
+  phone: '+880 1323-626282',
+  email: 'infi@zombiecoder.my.id',
+  website: 'https://zombiecoder.my.id/',
+  license: 'Proprietary - Local Freedom Protocol',
+};
+```
+
+This identity is also stored in the `SystemIdentity` database table as a read-only record (id: `zombiecoder-v1`).
+
+### Behavioral Rules
+
+Every agent system prompt includes these behavioral rules:
+
+1. Always identify as ZombieCoder, never as the underlying AI model
+2. Be honest about capabilities and limitations — if you don't know something, admit it clearly
+3. Use Bengali for conversation unless the user explicitly prefers English
+4. No repetition in responses — do not restate what was already said
+5. No hallucination — never fabricate information or present assumptions as facts
+
+### Bengali Language Support
+
+The system's primary conversational language is Bengali (বাংলা):
+
+- **Identity response:** "আমি ZombieCoder, যেখানে কোড ও কথা বলে। আমার নির্মাতা ও মালিক Sahon Srabon, Developer Zone।"
+- **Ethics refusal responses:** All written in Bengali
+- **Greeting prefix:** Configurable per agent via `config.languagePreferences.greetingPrefix`
+- **Language preference:** Agents default to Bengali conversation unless the user prefers English, controlled by `config.languagePreferences.primaryLanguage`
+
+### Identity Response
+
+When users ask "Who are you?", the system responds with the anchored identity:
+
+> আমি ZombieCoder, যেখানে কোড ও কথা বলে।  
+> আমার নির্মাতা ও মালিক Sahon Srabon, Developer Zone।  
+> আমি সততা ও স্বচ্ছতার সাথে কাজ করি। আমার সীমাবদ্ধতা সম্পর্কে সর্বদা সৎ থাকি।
+
+### Contact
+
+| Field | Value |
+|-------|-------|
+| **Owner** | Sahon Srabon |
+| **Organization** | Developer Zone |
+| **Email** | infi@zombiecoder.my.id |
+| **Website** | https://zombiecoder.my.id/ |
+| **Phone** | +880 1323-626282 |
+| **Location** | Dhaka, Bangladesh |
+
+---
+
+## File Structure Reference
+
+```
+zombiecoder-hub/
+├── prisma/
+│   └── schema.prisma              # Database schema (13 tables)
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx             # Root layout (ThemeProvider, metadata)
+│   │   ├── page.tsx               # Dashboard main UI (7 tabs)
+│   │   ├── globals.css            # Global styles + dark theme
+│   │   └── api/
+│   │       ├── health/route.ts    # GET /api/health
+│   │       ├── status/route.ts    # GET /api/status
+│   │       ├── metrics/route.ts   # GET /api/metrics
+│   │       ├── chat/route.ts      # POST /api/chat
+│   │       ├── providers/         # Provider CRUD + test + activate
+│   │       ├── agents/            # Agent CRUD
+│   │       ├── sessions/          # Session management + messages
+│   │       ├── memory/            # Agent + Individual memories
+│   │       ├── mcp/               # Tools + execute + logs + stats + config
+│   │       ├── settings/route.ts  # System settings
+│   │       └── prompt-templates/  # Template listing
+│   ├── components/
+│   │   ├── ui/                    # shadcn/ui component library
+│   │   └── dashboard/             # Dashboard components (10 files)
+│   ├── providers/
+│   │   ├── IProvider.ts           # Provider interface + ProviderError
+│   │   ├── OllamaProvider.ts      # Ollama REST API client
+│   │   ├── OpenAIProvider.ts      # OpenAI API client
+│   │   ├── GeminiProvider.ts      # Google Gemini API client
+│   │   ├── LlamaCppProvider.ts    # llama.cpp server client
+│   │   └── ProviderFactory.ts     # Factory with singleton caching
+│   ├── services/
+│   │   ├── providerGateway.ts     # Smart provider routing + fallback chain
+│   │   ├── promptEngine.ts        # Template system + agent prompt builder
+│   │   ├── memoryService.ts       # Memory CRUD + sessions + search (~744 lines)
+│   │   └── mcpService.ts          # MCP tool registry + execution (~1560 lines)
+│   ├── lib/
+│   │   ├── db.ts                  # Prisma client (singleton)
+│   │   ├── logger.ts              # Structured logging (stdout/stderr)
+│   │   ├── identity.ts            # System identity (SINGLE SOURCE OF TRUTH)
+│   │   ├── ethics.ts              # Ethics validation engine (8 categories)
+│   │   └── utils.ts               # Utility functions
+│   ├── types/
+│   │   └── index.ts               # TypeScript type definitions
+│   └── hooks/                     # React hooks
+├── mini-services/
+│   └── stock-server/
+│       ├── package.json
+│       └── index.ts               # Streaming proxy server (Bun :9999)
+├── db/
+│   └── custom.db                  # SQLite database file
+├── Caddyfile                      # Caddy reverse proxy config
+├── next.config.ts                 # Next.js config (standalone output)
+├── package.json                   # Dependencies and scripts
+├── tsconfig.json                  # TypeScript configuration
+├── worklog.md                     # Development work log
+└── docs/
+    └── SYSTEM_DOCUMENTATION.md    # This file
+```
+
+---
+
+*This documentation reflects the actual system implementation. No simulated, demo, or placeholder content is included. All descriptions are based on the production codebase.*

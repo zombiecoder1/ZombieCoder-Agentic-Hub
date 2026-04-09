@@ -82,7 +82,7 @@ export interface StreamChunk {
 
 // ─── Agent Types ────────────────────────────────────────────────────────────
 
-export type AgentType = 'editor' | 'chat' | 'cli' | 'orchestrator';
+export type AgentType = 'chatbot' | 'assistant' | 'coder' | 'researcher' | 'custom';
 export type AgentStatus = 'active' | 'inactive' | 'maintenance';
 
 export interface AgentConfig {
