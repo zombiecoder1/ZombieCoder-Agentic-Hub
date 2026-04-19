@@ -618,6 +618,42 @@ export class McpService {
       };
     }
 
+    // NEW: Security Check - Verify Agent Assignment
+    if (request.agentId) {
+      const assignment = await db.agentToolAssignment.findUnique({
+        where: {
+          agentId_toolId: {
+            agentId: request.agentId,
+            toolId: tool.id,
+          },
+        },
+      });
+
+      if (!assignment) {
+        const executionMs = Date.now() - startTime;
+        const errMsg = `Security Violation: Agent '${request.agentId}' is not authorized to use tool '${request.toolName}'`;
+        logger.error('Unauthorized tool access attempt', { agentId: request.agentId, toolName: request.toolName });
+        
+        await this.logExecution({
+          toolId: tool.id,
+          agentId: request.agentId,
+          sessionId: request.sessionId,
+          input: request.input,
+          output: null,
+          status: 'error',
+          errorMessage: errMsg,
+          executionMs,
+        });
+
+        return {
+          success: false,
+          error: errMsg,
+          executionMs,
+          toolName: request.toolName,
+        };
+      }
+    }
+
     // Check for executor
     const executor = this.executors.get(request.toolName);
     if (!executor) {

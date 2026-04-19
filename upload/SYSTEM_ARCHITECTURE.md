@@ -188,7 +188,7 @@ interface ILLMProvider {
 // ProviderFactory creates and caches provider instances
 const provider = ProviderFactory.create('ollama', {
   endpoint: 'http://localhost:11434',
-  model: 'llama3.1:latest',
+  model: 'gemma4:e2b',
   maxConnections: 10,
   temperature: 0.7,
   max_tokens: 2048
@@ -206,7 +206,7 @@ const provider = ProviderFactory.create('ollama', {
    ```bash
    # Ollama Configuration
    OLLAMA_BASE_URL=http://localhost:11434
-   OLLAMA_DEFAULT_MODEL=llama3.1:latest
+   OLLAMA_DEFAULT_MODEL=gemma4:e2b
    
    # llama.cpp Fallback
    LLAMA_CPP_FALLBACK_ENABLED=true
@@ -220,7 +220,7 @@ const provider = ProviderFactory.create('ollama', {
 
 3. **System Defaults** (if no DB or ENV):
    - Default to Ollama at `http://localhost:11434`
-   - Model: `llama3.1:latest`
+   - Model: `gemma4:e2b`
 
 ---
 
@@ -561,7 +561,7 @@ DB_NAME=uas_admin
 
 # Ollama Configuration
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_DEFAULT_MODEL=llama3.1:latest
+OLLAMA_DEFAULT_MODEL=gemma4:e2b
 
 # llama.cpp Fallback
 LLAMA_CPP_FALLBACK_ENABLED=true

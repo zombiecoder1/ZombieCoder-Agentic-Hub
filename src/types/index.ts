@@ -57,6 +57,7 @@ export interface ChatRequest {
   messages: ChatMessage[];
   agentId?: string;
   providerId?: string;
+  sessionId?: string;
   stream?: boolean;
   temperature?: number;
   maxTokens?: number;
@@ -70,6 +71,7 @@ export interface ChatResponse {
   tokenCount?: number;
   latencyMs: number;
   finishReason: string;
+  sessionId?: string;
 }
 
 export interface StreamChunk {

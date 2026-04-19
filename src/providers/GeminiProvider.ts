@@ -80,7 +80,10 @@ export class GeminiProvider implements ILLMProvider {
   constructor(config: ProviderConfig) {
     this.name = config.name ?? 'Gemini';
     this.baseUrl = (config.endpoint ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
-    this.model = config.model ?? DEFAULT_MODEL;
+    const configuredModel = config.model ?? DEFAULT_MODEL;
+    this.model = configuredModel.startsWith('models/')
+      ? configuredModel.slice('models/'.length)
+      : configuredModel;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.apiKeyEnvVar = config.apiKeyEnvVar ?? 'GEMINI_API_KEY';
 

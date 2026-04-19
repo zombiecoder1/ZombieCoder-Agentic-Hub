@@ -742,6 +742,39 @@ export class MemoryService {
       return { imported: 0, errors: entries.length };
     }
   }
+  /** Background task to extract individual memories from a chat history */
+  async extractIndividualMemories(sessionId: string): Promise<void> {
+    try {
+      const session = await this.getSession(sessionId);
+      if (!session || session.messages.length < 2) return;
+
+      const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user');
+      if (!lastUserMsg) return;
+
+      logger.info('Starting individual memory extraction', { sessionId });
+
+      const patterns = [
+        { regex: /my name is ([a-z\s]+)/i, type: 'fact', importance: 4.0 },
+        { regex: /i like ([a-z\s]+)/i, type: 'preference', importance: 3.0 },
+        { regex: /i'm a ([a-z\s]+)/i, type: 'technical', importance: 3.5 },
+      ];
+
+      for (const p of patterns) {
+        const match = lastUserMsg.content.match(p.regex);
+        if (match && match[1]) {
+          await this.addIndividualMemory({
+            content: match[0],
+            memoryType: p.type,
+            importance: p.importance,
+            metadata: { sourceSessionId: sessionId },
+          } as any);
+          logger.info('Extracted individual memory', { type: p.type, content: match[0] });
+        }
+      }
+    } catch (err) {
+      logger.error('Failed to extract individual memories', err as Error, { sessionId });
+    }
+  }
 }
 
 // ─── Singleton Export ─────────────────────────────────────────────────────────

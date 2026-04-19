@@ -44,13 +44,13 @@ export function HealthBadge({
   return (
     <Badge
       variant="outline"
-      className={cn("gap-1.5 text-xs font-medium", config.className, className)}
+      className={cn("gap-1.5 text-[9px] font-black uppercase tracking-widest px-2 h-5 rounded-md shadow-inner", config.className, className)}
     >
       <span
         className={cn(
           "inline-block size-1.5 rounded-full",
           config.dot,
-          status === "healthy" && "status-active"
+          status === "healthy" ? "glow-emerald animate-pulse" : status === "error" || status === "unhealthy" ? "glow-red" : "opacity-50"
         )}
       />
       {displayLabel}

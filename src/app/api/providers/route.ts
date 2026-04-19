@@ -5,6 +5,10 @@ import type { ProviderConfig } from '@/types';
 
 const headers = { 'X-Powered-By': getIdentityHeader() };
 
+function isValidEnvVarName(value: string): boolean {
+  return /^[A-Z_][A-Z0-9_]*$/.test(value);
+}
+
 export async function GET() {
   try {
     const providers = await providerGateway.listProviders();
@@ -39,6 +43,17 @@ export async function POST(request: NextRequest) {
     if (!validTypes.includes(body.type)) {
       return NextResponse.json(
         { success: false, error: `type must be one of: ${validTypes.join(', ')}`, timestamp: new Date().toISOString() },
+        { status: 400, headers }
+      );
+    }
+
+    if (body.apiKeyEnvVar && !isValidEnvVarName(body.apiKeyEnvVar)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `apiKeyEnvVar must be an environment variable name (e.g. GEMINI_API_KEY). It looks like you entered an API key value: "${body.apiKeyEnvVar}"`,
+          timestamp: new Date().toISOString(),
+        },
         { status: 400, headers }
       );
     }

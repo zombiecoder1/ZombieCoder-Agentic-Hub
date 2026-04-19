@@ -4,5 +4,14 @@
   "scripts": {
     "dev": "bun --hot index.ts"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
 }

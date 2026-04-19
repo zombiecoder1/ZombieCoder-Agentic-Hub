@@ -275,9 +275,9 @@ copy .env.example .env
 
 # 5. Start the Stock Server (optional, for streaming)
 cd mini-services\stock-server
-bun install
 bun run dev
 # Stock Server starts on port 9999
+bun install
 
 # 6. In a new terminal, start the development server
 cd ..\..
@@ -376,7 +376,7 @@ Create a `.env` file in the project root. All variables are optional (the system
 |----------|---------|-------------|
 | `DATABASE_URL` | `file:./db/custom.db` | SQLite database file path |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server endpoint |
-| `OLLAMA_DEFAULT_MODEL` | `llama3.1:latest` | Default model for Ollama provider |
+| `OLLAMA_DEFAULT_MODEL` | `gemma4:e2b` | Default model for Ollama provider |
 | `OPENAI_API_KEY` | — | OpenAI API key |
 | `GOOGLE_GEMINI_API_KEY` | — | Google Gemini API key |
 | `UAS_API_KEY` | — | API key for authenticated MCP tool execution |
@@ -417,7 +417,7 @@ Agents store configuration as JSON in the `config` field:
     "technicalLanguage": "English"
   },
   "systemInstructions": "Focus on TypeScript and React development",
-  "model": "llama3.1:latest",
+  "model": "gemma4:e2b",
   "metadata": {}
 }
 ```
@@ -480,7 +480,7 @@ System status with identity, uptime, active provider, and entity counts.
       "organization": "Developer Zone"
     },
     "uptime": 3600,
-    "activeProvider": { "name": "Ollama Local", "type": "ollama", "model": "llama3.1:latest" },
+    "activeProvider": { "name": "Ollama Local", "type": "ollama", "model": "gemma4:e2b" },
     "counts": {
       "providers": 2,
       "agents": 5,
@@ -525,7 +525,7 @@ Create a new provider.
   "name": "Ollama Local",
   "type": "ollama",
   "endpoint": "http://localhost:11434",
-  "model": "llama3.1:latest",
+  "model": "gemma4:e2b",
   "temperature": 0.7,
   "maxTokens": 2048
 }
@@ -641,7 +641,7 @@ Send a chat message. Passes through ethics validation before reaching any provid
   "data": {
     "id": "uuid",
     "content": "function hello() { ... }",
-    "model": "llama3.1:latest",
+    "model": "gemma4:e2b",
     "provider": "ollama",
     "tokenCount": 150,
     "latencyMs": 1200,
@@ -710,7 +710,7 @@ Add a message to a session.
 {
   "role": "user",
   "content": "How do I implement auth?",
-  "model": "llama3.1:latest",
+  "model": "gemma4:e2b",
   "provider": "ollama",
   "tokenCount": 25,
   "latencyMs": 150,
@@ -1075,7 +1075,7 @@ curl -X POST http://localhost:3000/api/providers \
     "name": "My Ollama",
     "type": "ollama",
     "endpoint": "http://localhost:11434",
-    "model": "llama3.1:latest"
+    "model": "gemma4:e2b"
   }'
 ```
 

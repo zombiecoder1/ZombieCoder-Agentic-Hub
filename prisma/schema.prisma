@@ -137,6 +137,7 @@ model ChatSession {
   updatedAt       DateTime @updatedAt
 
   messages        ChatMessage[]
+  editorBindings  EditorSessionBinding[]
 }
 
 // ─── Chat Messages ──────────────────────────────────────────────────────────
@@ -252,6 +253,67 @@ model ApiAuditLog {
   @@index([createdAt])
 }
 
+model EditorClientConnection {
+  id              String   @id @default(cuid())
+  clientId         String   @unique
+  sessionId        String
+
+  connectedAt      DateTime @default(now())
+  disconnectedAt   DateTime?
+  lastPingAt       DateTime?
+
+  ipAddress        String?
+  userAgent        String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  bindings         EditorSessionBinding[]
+  wsLogs           EditorWsRequestLog[]
+
+  @@index([sessionId])
+  @@index([connectedAt])
+ }
+
+model EditorSessionBinding {
+  id              String   @id @default(cuid())
+
+  clientId        String
+  client          EditorClientConnection @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  chatSessionId   String
+  chatSession     ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime @default(now())
+
+  @@unique([clientId, chatSessionId])
+  @@index([chatSessionId])
+ }
+
+model EditorWsRequestLog {
+  id              String   @id @default(cuid())
+  requestId       String?
+
+  clientId        String
+  client          EditorClientConnection @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  editorSessionId String?
+  messageType     String?  // chat | mcp_execute | register
+
+  providerType    String?
+  model           String?
+  latencyMs       Int?
+
+  status          String   @default("success") // success | error
+  errorMessage    String?
+
+  metadata        String   @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([clientId])
+  @@index([createdAt])
+ }
+
 // ─── Prompt Templates ───────────────────────────────────────────────────────
 
 model PromptTemplate {
@@ -266,4 +328,30 @@ model PromptTemplate {
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model AuthUser {
+  id           String      @id @default(cuid())
+  name         String
+  email        String      @unique
+  passwordHash String
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  sessions     AuthSession[]
+
+  @@index([email])
+}
+
+model AuthSession {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  userId     String
+  user       AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@index([expiresAt])
 }

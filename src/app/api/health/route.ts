@@ -24,7 +24,8 @@ export async function GET() {
     // Check Stock Server
     let stockServerStatus: 'connected' | 'disconnected' = 'disconnected';
     try {
-      const res = await fetch('http://localhost:9999/health', {
+      const baseUrl = process.env.STOCK_SERVER_BASE_URL || 'http://localhost:9999';
+      const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/health`, {
         signal: AbortSignal.timeout(3000),
       });
       stockServerStatus = res.ok ? 'connected' : 'disconnected';

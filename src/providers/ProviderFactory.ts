@@ -22,7 +22,8 @@ const log = createLogger('provider:factory');
  */
 function cacheKey(type: ProviderType, config: ProviderConfig): string {
   const endpoint = config.endpoint ?? '';
-  return `${type}:${endpoint}`;
+  const model = config.model ?? '';
+  return `${type}:${endpoint}:${model}`;
 }
 
 // ── Provider registry (maps type → constructor) ───────────────────────────────

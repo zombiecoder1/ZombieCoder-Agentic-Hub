@@ -6,6 +6,7 @@ import { db } from '@/lib/db';
 import { createLogger } from '@/lib/logger';
 import { ProviderFactory } from '@/providers/ProviderFactory';
 import type { ILLMProvider, ProviderResponse } from '@/providers/IProvider';
+import { ProviderError } from '@/providers/IProvider';
 import type { ChatMessage, ProviderConfig, ProviderHealth, StreamChunk } from '@/types';
 
 const logger = createLogger('provider-gateway');
@@ -61,6 +62,15 @@ export class ProviderGateway {
       logger.warn('Database provider lookup failed, falling back to env', { error });
     }
 
+    // If DB has providers configured but none active, do NOT silently fall back.
+    const configuredCount = await db.aiProvider.count();
+    if (configuredCount > 0) {
+      throw new Error(
+        'No active AI provider selected. Please activate a provider in the Providers panel. ' +
+        'The system will not silently fall back to a local provider when providers are configured.'
+      );
+    }
+
     // Check environment variables
     const envProvider = this.getProviderFromEnv();
     if (envProvider) {
@@ -77,6 +87,57 @@ export class ProviderGateway {
 
   // ─── Chat Completions ────────────────────────────────────────────────────
 
+  private isRetryableStatus(status?: number): boolean {
+    return status === 429 || status === 503 || status === 504;
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async chatWithRetry(
+    provider: ILLMProvider,
+    messages: ChatMessage[],
+    options?: {
+      systemPrompt?: string;
+      temperature?: number;
+      maxTokens?: number;
+    },
+  ): Promise<ProviderResponse> {
+    const maxAttempts = Number(process.env.PROVIDER_CHAT_MAX_ATTEMPTS) || 3;
+    const baseDelayMs = Number(process.env.PROVIDER_CHAT_RETRY_BASE_DELAY_MS) || 350;
+
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await provider.chat(messages, options);
+      } catch (err) {
+        lastError = err;
+
+        if (!(err instanceof ProviderError) || !this.isRetryableStatus(err.statusCode)) {
+          throw err;
+        }
+
+        if (attempt === maxAttempts) {
+          throw err;
+        }
+
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        logger.warn('Retryable provider error, backing off', {
+          provider: provider.name,
+          providerType: provider.type,
+          statusCode: err.statusCode,
+          attempt,
+          maxAttempts,
+          delayMs: delay,
+        });
+        await this.sleep(delay);
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('Provider chat failed');
+  }
+
   async chat(
     messages: ChatMessage[],
     options?: {
@@ -84,13 +145,14 @@ export class ProviderGateway {
       systemPrompt?: string;
       temperature?: number;
       maxTokens?: number;
+      model?: string;
     }
   ): Promise<ProviderResponse> {
     const start = Date.now();
-    const provider = await this.getActiveProvider(options?.providerId);
+    const provider = await this.getActiveProviderWithModel(options?.providerId, options?.model);
 
     try {
-      const response = await provider.chat(messages, {
+      const response = await this.chatWithRetry(provider, messages, {
         systemPrompt: options?.systemPrompt,
         temperature: options?.temperature,
         maxTokens: options?.maxTokens,
@@ -123,10 +185,11 @@ export class ProviderGateway {
       systemPrompt?: string;
       temperature?: number;
       maxTokens?: number;
+      model?: string;
       onChunk: (chunk: StreamChunk) => void;
     }
   ): Promise<StreamChunk> {
-    const provider = await this.getActiveProvider(options?.providerId);
+    const provider = await this.getActiveProviderWithModel(options?.providerId, options?.model);
 
     try {
       return await provider.chatStream(messages, {
@@ -190,6 +253,111 @@ export class ProviderGateway {
 
     logger.info('Provider created', { id: provider.id, name: provider.name, type: provider.type });
     return this.buildProviderInstance(provider);
+  }
+
+  private async getActiveProviderWithModel(providerId?: string, modelOverride?: string): Promise<ILLMProvider> {
+    if (!modelOverride) {
+      return this.getActiveProvider(providerId);
+    }
+
+    // When a model override is requested we still respect provider selection,
+    // but we create/cache a distinct provider instance keyed by (type+endpoint+model)
+    // so model switching doesn't corrupt existing cached instances.
+    const dbProvider = providerId
+      ? await db.aiProvider.findUnique({ where: { id: providerId } })
+      : await db.aiProvider.findFirst({ where: { isDefault: true, status: 'active' } });
+
+    if (!dbProvider) {
+      // Fall back to env provider behavior from getActiveProvider
+      return this.getActiveProvider(providerId);
+    }
+
+    return this.buildProviderInstance({
+      id: dbProvider.id,
+      name: dbProvider.name,
+      type: dbProvider.type,
+      endpoint: dbProvider.endpoint,
+      model: modelOverride,
+      apiKeyEnvVar: dbProvider.apiKeyEnvVar,
+      config: dbProvider.config,
+    });
+  }
+
+  async listRuntimeModels(providerId: string): Promise<{ providerId: string; providerType: string; endpoint: string | null; models: string[]; supported: boolean }> {
+    const provider = await db.aiProvider.findUnique({ where: { id: providerId } });
+    if (!provider) {
+      throw new Error('Provider not found');
+    }
+
+    const endpoint = provider.endpoint;
+    const type = provider.type;
+
+    // Some providers can't enumerate models reliably; we still return current model.
+    if (!endpoint) {
+      return { providerId, providerType: type, endpoint: null, models: provider.model ? [provider.model] : [], supported: false };
+    }
+
+    if (type === 'ollama') {
+      const res = await fetch(`${endpoint.replace(/\/+$/, '')}/api/tags`);
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(`Failed to list Ollama models: ${res.status} ${t}`);
+      }
+      const data = await res.json() as { models?: Array<{ name?: string }> };
+      const models = (data.models || []).map((m) => m.name).filter((m): m is string => !!m);
+      return { providerId, providerType: type, endpoint, models, supported: true };
+    }
+
+    if (type === 'openai') {
+      const apiKeyEnvVar = provider.apiKeyEnvVar || 'OPENAI_API_KEY';
+      const apiKey = process.env[apiKeyEnvVar];
+      if (!apiKey) {
+        throw new Error(`Missing API key env var: ${apiKeyEnvVar}`);
+      }
+      const res = await fetch(`${endpoint.replace(/\/+$/, '')}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(`Failed to list OpenAI models: ${res.status} ${t}`);
+      }
+      const data = await res.json() as { data?: Array<{ id?: string }> };
+      const models = (data.data || []).map((m) => m.id).filter((m): m is string => !!m);
+      return { providerId, providerType: type, endpoint, models, supported: true };
+    }
+
+    if (type === 'gemini') {
+      const apiKeyEnvVar = provider.apiKeyEnvVar || 'GEMINI_API_KEY';
+      const apiKey = process.env[apiKeyEnvVar];
+      if (!apiKey) {
+        throw new Error(`Missing API key env var: ${apiKeyEnvVar}`);
+      }
+      const res = await fetch(`${endpoint.replace(/\/+$/, '')}/models?key=${apiKey}`);
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(`Failed to list Gemini models: ${res.status} ${t}`);
+      }
+      const data = await res.json() as { models?: Array<{ name?: string }> };
+      const models = (data.models || [])
+        .map((m) => m.name)
+        .filter((m): m is string => !!m)
+        .map((name) => (name.startsWith('models/') ? name.slice('models/'.length) : name));
+      return { providerId, providerType: type, endpoint, models, supported: true };
+    }
+
+    // llamacpp and unknown providers: no standard listing
+    return { providerId, providerType: type, endpoint, models: provider.model ? [provider.model] : [], supported: false };
+  }
+
+  async getProviderUsage(providerId: string): Promise<{ providerId: string; sessions: number; messages: number; lastUsedAt: string | null }> {
+    const sessions = await db.chatSession.count({ where: { providerId } });
+    const messages = await db.chatMessage.count({ where: { session: { providerId } } });
+    const lastMsg = await db.chatMessage.findFirst({
+      where: { session: { providerId } },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    return { providerId, sessions, messages, lastUsedAt: lastMsg ? lastMsg.createdAt.toISOString() : null };
   }
 
   async testProvider(providerId: string): Promise<ProviderHealth> {
@@ -277,16 +445,17 @@ export class ProviderGateway {
   }
 
   private async getProviderById(providerId: string): Promise<ILLMProvider> {
-    // Check cache
-    const cached = this.cache.get(providerId);
-    if (cached && Date.now() - cached.createdAt < this.providerCacheTtl) {
-      return cached.provider;
-    }
-
     // Load from database
     const provider = await db.aiProvider.findUnique({ where: { id: providerId } });
     if (!provider) {
       throw new Error(`Provider not found: ${providerId}`);
+    }
+
+    // Check cache (keyed by providerId:model)
+    const cacheKey = `${providerId}:${provider.model || ''}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.createdAt < this.providerCacheTtl) {
+      return cached.provider;
     }
 
     return this.buildProviderInstance(provider);
@@ -302,6 +471,7 @@ export class ProviderGateway {
     config: string;
   }): ILLMProvider {
     const config = JSON.parse(dbProvider.config) as Record<string, unknown>;
+    const cacheKey = `${dbProvider.id}:${dbProvider.model || ''}`;
     const providerConfig: ProviderConfig = {
       name: dbProvider.name,
       type: dbProvider.type as ProviderConfig['type'],
@@ -317,7 +487,7 @@ export class ProviderGateway {
     const instance = ProviderFactory.create(dbProvider.type as 'ollama' | 'openai' | 'gemini' | 'llamacpp', providerConfig);
 
     // Cache it
-    this.cache.set(dbProvider.id, {
+    this.cache.set(cacheKey, {
       provider: instance,
       createdAt: Date.now(),
     });
@@ -334,7 +504,7 @@ export class ProviderGateway {
         name: 'Ollama (env)',
         type: 'ollama',
         endpoint: ollamaUrl,
-        model: process.env.OLLAMA_DEFAULT_MODEL || 'llama3.1:latest',
+        model: process.env.OLLAMA_DEFAULT_MODEL || 'gemma4:e2b',
       });
     }
 

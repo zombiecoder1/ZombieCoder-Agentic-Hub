@@ -7,6 +7,7 @@ import { createLogger } from '@/lib/logger';
 import { getIdentityHeader } from '@/lib/identity';
 import type { ChatRequest, ChatResponse, ChatMessage } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
+import { ProviderError } from '@/providers/IProvider';
 
 const logger = createLogger('chat-api');
 const headers = { 'X-Powered-By': getIdentityHeader() };
@@ -41,8 +42,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Build system prompt
+    // Build system prompt + resolve agent defaults
     let systemPrompt: string | undefined;
+    let agentProviderId: string | undefined;
+    let agentModel: string | undefined;
     if (body.agentId) {
       try {
         const { db } = await import('@/lib/db');
@@ -51,6 +54,7 @@ export async function POST(request: NextRequest) {
           include: { provider: true },
         });
         if (agent) {
+          agentProviderId = agent.providerId || undefined;
           const agentConfig = {
             name: agent.name,
             type: agent.type as 'chatbot' | 'assistant' | 'coder' | 'researcher' | 'custom',
@@ -61,6 +65,7 @@ export async function POST(request: NextRequest) {
             config: typeof agent.config === 'string' ? JSON.parse(agent.config) : agent.config,
             providerId: agent.providerId || undefined,
           };
+          agentModel = (agentConfig.config as { model?: string } | undefined)?.model;
           systemPrompt = buildAgentSystemPrompt(agentConfig);
         }
       } catch (err) {
@@ -68,31 +73,111 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Send to provider gateway
-    const messages: ChatMessage[] = body.messages;
-    const response = await providerGateway.chat(messages, {
-      providerId: body.providerId,
-      systemPrompt,
-      temperature: body.temperature,
-      maxTokens: body.maxTokens,
+    const effectiveProviderId = body.providerId ?? agentProviderId;
+
+    // Create/attach chat session
+    let activeSessionId: string;
+    if (body.sessionId) {
+      const existing = await memoryService.getSession(body.sessionId);
+      activeSessionId = existing?.id || (await memoryService.createSession({ agentId: body.agentId, providerId: effectiveProviderId })).id;
+    } else {
+      activeSessionId = (await memoryService.createSession({ agentId: body.agentId, providerId: effectiveProviderId })).id;
+    }
+
+    // Persist user message (last one)
+    const latestUser = [...body.messages].reverse().find((m) => m.role === 'user');
+    if (latestUser) {
+      await memoryService.addMessage(activeSessionId, {
+        role: 'user',
+        content: latestUser.content,
+        metadata: { agentId: body.agentId ?? null, providerId: effectiveProviderId ?? null },
+      });
+    }
+
+    // Prepare for streaming
+    const encoder = new TextEncoder();
+    let assistantFullContent = '';
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const sendEvent = (event: string, data: any) => {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        };
+
+        try {
+          sendEvent('session', { sessionId: activeSessionId });
+
+          const finalChunk = await providerGateway.chatStream(body.messages, {
+            providerId: effectiveProviderId,
+            systemPrompt,
+            temperature: body.temperature,
+            maxTokens: body.maxTokens,
+            model: agentModel,
+            onChunk: (chunk) => {
+              assistantFullContent += chunk.content;
+              sendEvent('chunk', {
+                id: uuidv4(),
+                content: chunk.content,
+                model: chunk.model,
+                provider: chunk.provider,
+                sessionId: activeSessionId
+              });
+            },
+          });
+
+          // Finalize and persist
+          await memoryService.addMessage(activeSessionId, {
+            role: 'assistant',
+            content: assistantFullContent,
+            model: finalChunk.model,
+            provider: finalChunk.provider,
+            tokenCount: finalChunk.tokenCount,
+            latencyMs: finalChunk.latencyMs,
+            metadata: { finishReason: finalChunk.finishReason },
+          });
+
+          // Trigger background memory extraction
+          void memoryService.extractIndividualMemories(activeSessionId);
+
+          sendEvent('done', {
+            model: finalChunk.model,
+            provider: finalChunk.provider,
+            tokenCount: finalChunk.tokenCount,
+            latencyMs: finalChunk.latencyMs,
+            finishReason: finalChunk.finishReason,
+          });
+        } catch (err) {
+          logger.error('Stream failure', err as Error);
+          sendEvent('error', { error: (err as Error).message });
+        } finally {
+          controller.close();
+        }
+      },
     });
 
-    const chatResponse: ChatResponse = {
-      id: uuidv4(),
-      content: response.content,
-      model: response.model,
-      provider: response.provider,
-      tokenCount: response.tokenCount,
-      latencyMs: response.latencyMs,
-      finishReason: response.finishReason,
-    };
-
-    return NextResponse.json(
-      { success: true, data: chatResponse, timestamp: new Date().toISOString() },
-      { status: 200, headers }
-    );
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        ...headers,
+      },
+    });
   } catch (error) {
     logger.error('Chat API error', error as Error);
+    if (error instanceof ProviderError) {
+      const status = error.statusCode ?? 502;
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
+          providerType: error.providerType,
+          statusCode: error.statusCode,
+          timestamp: new Date().toISOString(),
+        },
+        { status, headers }
+      );
+    }
     return NextResponse.json(
       {
         success: false,

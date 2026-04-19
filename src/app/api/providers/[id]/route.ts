@@ -6,6 +6,10 @@ import type { ProviderConfig } from '@/types';
 
 const headers = { 'X-Powered-By': getIdentityHeader() };
 
+function isValidEnvVarName(value: string): boolean {
+  return /^[A-Z_][A-Z0-9_]*$/.test(value);
+}
+
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, context: RouteContext) {
@@ -57,7 +61,19 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     if (body.name !== undefined) updateData.name = body.name;
     if (body.endpoint !== undefined) updateData.endpoint = body.endpoint;
     if (body.model !== undefined) updateData.model = body.model;
-    if (body.apiKeyEnvVar !== undefined) updateData.apiKeyEnvVar = body.apiKeyEnvVar;
+    if (body.apiKeyEnvVar !== undefined) {
+      if (body.apiKeyEnvVar && !isValidEnvVarName(body.apiKeyEnvVar)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `apiKeyEnvVar must be an environment variable name (e.g. GEMINI_API_KEY). It looks like you entered an API key value: "${body.apiKeyEnvVar}"`,
+            timestamp: new Date().toISOString(),
+          },
+          { status: 400, headers }
+        );
+      }
+      updateData.apiKeyEnvVar = body.apiKeyEnvVar;
+    }
 
     // Merge config
     if (body.temperature !== undefined || body.maxTokens !== undefined || body.timeoutMs !== undefined) {
