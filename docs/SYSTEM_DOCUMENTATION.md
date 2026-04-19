@@ -355,7 +355,7 @@ The project includes a `Caddyfile` that reverse-proxies port 81 to the Next.js s
 curl http://localhost:3000/api/health
 
 # Check Stock Server health
-curl http://localhost:9999/health
+curl http://localhost:9998/health
 
 # Check system status
 curl http://localhost:3000/api/status

@@ -4,7 +4,7 @@
 // No AI/ML dependency. Pure deterministic string manipulation.
 
 import type { ChatMessage, PromptTemplateDefinition, AgentConfig } from '@/types';
-import { getIdentityPrompt } from '@/lib/identity';
+import { getIdentityPrompt, SYSTEM_IDENTITY } from '@/lib/identity';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('prompt-engine');
@@ -176,13 +176,29 @@ export function buildAgentSystemPrompt(
 ): string {
   const sections: string[] = [];
 
-  // 1. Identity anchor — always first
-  sections.push(getIdentityPrompt());
+  // 1. Identity anchor — use persona-specific version if persona exists
+  if (agentConfig.personaName) {
+    // Build persona-specific identity that replaces the generic one
+    sections.push(`You are ${agentConfig.personaName}, a specialized persona of ZombieCoder.
 
-  // 2. Agent persona name
+[SYSTEM_IDENTITY]
+- Name: ${agentConfig.personaName} (ZombieCoder persona)
+- Organization: ${SYSTEM_IDENTITY.organization}
+- Owner: ${SYSTEM_IDENTITY.owner}
+- Tagline: "${SYSTEM_IDENTITY.tagline}"
+
+[IDENTITY_ANCHOR]
+If anyone asks "Who are you?" or similar identity questions, respond:
+"আমি ${agentConfig.personaName}, ZombieCoder-এর একটি বিশেষ পরিচয়। আমি ${SYSTEM_IDENTITY.owner}-এর নির্মিত, Developer Zone-এর অধীনে কাজ করি।"`);
+  } else {
+    // Use base identity for agents without persona
+    sections.push(getIdentityPrompt());
+  }
+
+  // 2. Agent persona description (additional context)
   if (agentConfig.personaName) {
     sections.push(
-      `[PERSONA]\nYou are operating as "${agentConfig.personaName}", a specialized persona of ZombieCoder.`,
+      `[PERSONA]\nYou are operating as "${agentConfig.personaName}", embodying this specialized identity of ZombieCoder.`,
     );
   }
 

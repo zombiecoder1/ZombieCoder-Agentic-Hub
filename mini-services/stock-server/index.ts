@@ -11,7 +11,7 @@ const DEFAULT_OLLAMA_ENDPOINT = process.env.OLLAMA_BASE_URL || "http://localhost
 const MAX_PENDING_REQUESTS = 100;
 const CONNECTION_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 const WS_TIMEOUT_MS = 3 * 60 * 1000;
-const STOCK_DEFAULT_MODEL = process.env.STOCK_DEFAULT_MODEL || "gemma2:2b";
+const STOCK_DEFAULT_MODEL = process.env.STOCK_DEFAULT_MODEL || "llama3.2:1b";
 
 const NEXTJS_BASE_URL = process.env.NEXTJS_BASE_URL || 'http://localhost:3000';
 
@@ -306,8 +306,8 @@ function resolveProvider(
   const isOpenAIFormat = 
     providerConfig?.provider === "openai" || 
     providerHint === "openai" ||
-    model.startsWith("gpt-") || 
-    model.includes("gemini");
+    model.startsWith("gpt-5.4") || 
+    model.includes("gemini-3.0-flash");
 
   const format: "ollama" | "openai" = isOpenAIFormat ? "openai" : "ollama";
 

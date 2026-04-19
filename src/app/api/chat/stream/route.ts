@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
         if (agent) {
           agentProviderId = agent.providerId || undefined;
           const agentConfig = {
+            id: agent.id,
             name: agent.name,
             type: agent.type as 'chatbot' | 'assistant' | 'coder' | 'researcher' | 'custom',
             status: agent.status as 'active' | 'inactive' | 'maintenance',
@@ -70,7 +71,25 @@ export async function POST(request: NextRequest) {
             providerId: agent.providerId || undefined,
           };
           agentModel = (agentConfig.config as { model?: string } | undefined)?.model;
-          systemPrompt = buildAgentSystemPrompt(agentConfig);
+
+          // Fetch agent memories for context
+          const { memories: agentMemories } = await memoryService.getAgentMemories(agent.id, { limit: 20 });
+          // Fetch recent individual memories
+          const { memories: individualMemories } = await memoryService.getIndividualMemories({ limit: 10 });
+
+          // Build memory context
+          const memoryContextParts: string[] = [];
+          if (agentMemories.length > 0) {
+            memoryContextParts.push('[AGENT_MEMORIES]');
+            memoryContextParts.push(...agentMemories.map(m => `- ${m.topic}: ${m.content}`));
+          }
+          if (individualMemories.length > 0) {
+            memoryContextParts.push('[CONVERSATION_MEMORIES]');
+            memoryContextParts.push(...individualMemories.map(m => `- ${m.memoryType}: ${m.content}`));
+          }
+          const memoryContext = memoryContextParts.length > 0 ? memoryContextParts.join('\n') : undefined;
+
+          systemPrompt = buildAgentSystemPrompt(agentConfig, memoryContext);
         }
       } catch (err) {
         logger.warn('Failed to load agent config for streaming', { error: err });
