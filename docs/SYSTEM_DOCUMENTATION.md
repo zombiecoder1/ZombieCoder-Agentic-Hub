@@ -940,7 +940,7 @@ Returns templates from `src/services/promptEngine.ts`:
 
 ### Built-in Tools
 
-7 built-in tools are registered at startup via `mcpService.seedBuiltinTools()`:
+7 built-in tools can be seeded into the database via `mcpService.seedBuiltinTools()` (triggered automatically by `GET /api/mcp/tools`):
 
 | Tool | Category | Auth | Input Parameters | Executor |
 |------|----------|------|-----------------|----------|
@@ -951,6 +951,17 @@ Returns templates from `src/services/promptEngine.ts`:
 | `web_search` | web | **Yes** | `query` (required), `limit` | Requires `SEARCH_API_KEY` + `SEARCH_API_ENDPOINT` |
 | `code_analyze` | code | No | `path` (required), `includeMetrics` | Source code metrics analysis |
 | `system_info` | system | No | `sections` | OS, CPU, memory, network, runtime, process |
+
+#### Legacy Tool Name Compatibility
+
+Some installations may already have MCP tools stored in SQLite using older/standard names:
+
+- `read_file` → alias of `file_read`
+- `write_file` → alias of `file_write`
+- `run_command` → alias of `shell_execute`
+- `search_code` → project search executor (ripgrep-backed with a safe fallback)
+
+These legacy names are supported so editors like VS Code/Cursor/Windsurf can connect without requiring database resets.
 
 ### Custom Tool Registration
 
@@ -986,6 +997,8 @@ The MCP config endpoint (`GET /api/mcp/config`) generates editor-specific config
 }
 ```
 
+> Note: `autoApprove` / `requireConfirmation` are generated dynamically based on which tool names exist in the database (e.g., `file_read` vs `read_file`).
+
 #### Qoder Configuration
 
 ```json
@@ -1012,6 +1025,30 @@ The MCP config endpoint (`GET /api/mcp/config`) generates editor-specific config
   "tools": [...],
   "categories": ["file", "shell", "web", "code", "system"]
 }
+```
+
+### HTTP Transport (Cursor/VS Code/Windsurf)
+
+This repo includes an HTTP MCP client config at `./.mcp/mcp_config.json` for editors that support HTTP-based MCP transports.
+
+Key endpoints:
+
+- `GET /api/mcp/tools` — list (and auto-seed) MCP tools
+- `POST /api/mcp/execute` — execute a tool (with logging)
+- `GET /api/mcp/logs` — tool execution logs
+- `GET /api/mcp/stats` — aggregate tool stats
+- `GET /api/mcp/config` — editor-friendly JSON config output
+
+### Terminal Verification
+
+Run these to verify your editor + MCP are actually connected and tool calls are working:
+
+```bash
+# 1) HTTP smoke test (lists tools + runs a few safe executions)
+bash scripts/mcp-http-smoke.sh http://localhost:3000
+
+# 2) DB check (see connected editor clients + tool execution logs)
+bash scripts/db-connection-check.sh db/custom.db
 ```
 
 ### Shell Command Whitelist
