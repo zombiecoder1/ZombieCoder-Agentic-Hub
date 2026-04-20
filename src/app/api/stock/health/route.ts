@@ -5,7 +5,7 @@ const headers = { 'X-Powered-By': getIdentityHeader() };
 
 export async function GET() {
   try {
-    const baseUrl = process.env.STOCK_SERVER_BASE_URL || 'http://localhost:9999';
+    const baseUrl = process.env.STOCK_SERVER_BASE_URL || 'http://localhost:9998';
     const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/health`, {
       headers: { Accept: 'application/json' },
       cache: 'no-store',

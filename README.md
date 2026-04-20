@@ -39,7 +39,7 @@ ZombieCoder Agentic Hub is a self-hosted AI orchestration platform that provides
 ### Key Capabilities
 
 1. **Multi-Provider AI Integration** — Connect to Ollama, OpenAI, Gemini, and llama.cpp simultaneously
-2. **Real-time Streaming** — SSE and WebSocket streaming via the Stock Server on port 9999
+2. **Real-time Streaming** — SSE and WebSocket streaming via the Stock Server on port 9998
 3. **Agent Orchestration** — Create and manage specialized AI agents with unique personas
 4. **Persistent Memory** — SQLite-based memory system for agent and user memories
 5. **MCP Tool Registry** — Extensible tool system with 7 built-in tools and real execution capabilities
@@ -72,7 +72,7 @@ ZombieCoder Agentic Hub is a self-hosted AI orchestration platform that provides
 │           ▼                  ▼                  ▼                  │
 │  ┌────────────────┐ ┌────────────────┐ ┌───────────────────┐    │
 │  │   SQLite DB    │ │  Stock Server  │ │  External AI      │    │
-│  │   (Prisma ORM) │ │  (Bun :9999)   │ │  Providers        │    │
+│  │   (Prisma ORM) │ │  (Bun :9998)   │ │  Providers        │    │
 │  │                │ │  HTTP+WebSocket │ │  Ollama · OpenAI  │    │
 │  │  13 Tables     │ │  SSE · NDJSON   │ │  Gemini · LlamaCpp│    │
 │  └────────────────┘ └────────────────┘ └───────────────────┘    │
@@ -87,7 +87,7 @@ ZombieCoder Agentic Hub is a self-hosted AI orchestration platform that provides
 | Language | TypeScript 5 |
 | Database | SQLite via Prisma ORM |
 | UI | Tailwind CSS 4 + shadcn/ui + Radix UI |
-| Streaming Server | Bun HTTP + WebSocket (port 9999) |
+| Streaming Server | Bun HTTP + WebSocket (port 9998) |
 | State Management | Zustand |
 | Icons | Lucide React |
 | Animations | Framer Motion |
@@ -276,7 +276,7 @@ copy .env.example .env
 # 5. Start the Stock Server (optional, for streaming)
 cd mini-services\stock-server
 bun run dev
-# Stock Server starts on port 9999
+# Stock Server starts on port 9998
 bun install
 
 # 6. In a new terminal, start the development server
@@ -304,7 +304,7 @@ cp .env.example .env
 
 # 5. Start the Stock Server (optional, for streaming)
 cd mini-services/stock-server && bun install && bun run dev &
-# Stock Server starts on port 9999
+# Stock Server starts on port 9998
 
 # 6. Start the development server
 cd ../..
@@ -355,7 +355,7 @@ The project includes a `Caddyfile` that reverse-proxies port 81 to the Next.js s
 curl http://localhost:3000/api/health
 
 # Check Stock Server health
-curl http://localhost:9999/health
+curl http://localhost:9998/health
 
 # Check system status
 curl http://localhost:3000/api/status
@@ -1269,7 +1269,7 @@ The `isShellCommandAllowed()` function in `src/services/mcpService.ts` implement
 ### CORS Configuration
 
 - Next.js API routes inherit Next.js default CORS
-- Stock Server (port 9999) has `Access-Control-Allow-Origin: *` for all endpoints
+- Stock Server (port 9998) has `Access-Control-Allow-Origin: *` for all endpoints
 - Production deployments should configure CORS via the Caddy reverse proxy
 
 ---
@@ -1383,7 +1383,7 @@ bun run start
 curl http://localhost:3000/api/health
 
 # Check if Stock Server is running
-curl http://localhost:9999/health
+curl http://localhost:9998/health
 
 # Check database connectivity
 # If /api/health shows database: "disconnected", check:
@@ -1532,7 +1532,7 @@ zombiecoder-hub/
 ├── mini-services/
 │   └── stock-server/
 │       ├── package.json
-│       └── index.ts               # Streaming proxy server (Bun :9999)
+│       └── index.ts               # Streaming proxy server (Bun :9998)
 ├── db/
 │   └── custom.db                  # SQLite database file
 ├── Caddyfile                      # Caddy reverse proxy config

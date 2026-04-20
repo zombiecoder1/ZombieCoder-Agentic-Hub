@@ -5,10 +5,10 @@ This plan makes MCP usable from any editor via a copy-paste config, fixes provid
 Update the file to be editor-agnostic and copy-paste friendly.
 Include two server entries:
 HTTP MCP (Next.js http://localhost:3000/api/mcp/*) for tools + logs.
-WebSocket stock-server (ws://localhost:9999/) for editor session + streaming chat.
+WebSocket stock-server (ws://localhost:9998/) for editor session + streaming chat.
 Add clear placeholders and env vars (no hardcoded secrets):
 UAS_API_KEY for MCP tool execution.
-STOCK_SERVER_BASE_URL (default http://localhost:9999).
+STOCK_SERVER_BASE_URL (default http://localhost:9998).
 STOCK_DEFAULT_MODEL (default gemma2:2b).
 Provide “snippets” blocks for:
 VSCode/Windsurf/Cursor-like MCP settings.

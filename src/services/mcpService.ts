@@ -8,10 +8,11 @@ import type { ToolDefinition, ToolExecutionRequest, ToolExecutionResult } from '
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const logger = createLogger('mcp');
 
 // ─── Prisma model types (mirror of generated types) ──────────────────────────
@@ -313,6 +314,12 @@ const BUILTIN_TOOLS: readonly BuiltinToolDef[] = [
 
 type ToolExecutor = (params: Record<string, unknown>) => Promise<string>;
 
+const BUILTIN_TOOL_EQUIVALENTS: Readonly<Record<string, readonly string[]>> = {
+  file_read: ['read_file'],
+  file_write: ['write_file'],
+  shell_execute: ['run_command'],
+};
+
 // ─── MCP Service ─────────────────────────────────────────────────────────────
 
 export class McpService {
@@ -331,6 +338,12 @@ export class McpService {
     this.executors.set('web_search', this.executeWebSearch.bind(this));
     this.executors.set('code_analyze', this.executeCodeAnalyze.bind(this));
     this.executors.set('system_info', this.executeSystemInfo.bind(this));
+
+    // Legacy MCP tool names (kept for compatibility with existing DB/tool configs)
+    this.executors.set('read_file', this.executeFileRead.bind(this));
+    this.executors.set('write_file', this.executeFileWrite.bind(this));
+    this.executors.set('run_command', this.executeShellCommand.bind(this));
+    this.executors.set('search_code', this.executeSearchCode.bind(this));
   }
 
   // ─── Tool Management ─────────────────────────────────────────────────────
@@ -920,6 +933,20 @@ export class McpService {
     }));
 
     const resolvedWorkspace = workspace || process.cwd();
+    const enabledToolNames = new Set(tools.map((t) => t.name));
+
+    const autoApprove: string[] = [];
+    if (enabledToolNames.has('file_read')) autoApprove.push('file_read');
+    else if (enabledToolNames.has('read_file')) autoApprove.push('read_file');
+    if (enabledToolNames.has('file_list')) autoApprove.push('file_list');
+    if (enabledToolNames.has('system_info')) autoApprove.push('system_info');
+
+    const requireConfirmation: string[] = [];
+    if (enabledToolNames.has('file_write')) requireConfirmation.push('file_write');
+    else if (enabledToolNames.has('write_file')) requireConfirmation.push('write_file');
+    if (enabledToolNames.has('shell_execute')) requireConfirmation.push('shell_execute');
+    else if (enabledToolNames.has('run_command')) requireConfirmation.push('run_command');
+    if (enabledToolNames.has('web_search')) requireConfirmation.push('web_search');
 
     const vscode: Record<string, unknown> = {
       version: '0.1.0',
@@ -930,8 +957,8 @@ export class McpService {
         workspace: resolvedWorkspace,
       },
       settings: {
-        autoApprove: ['file_read', 'file_list', 'system_info'],
-        requireConfirmation: ['file_write', 'shell_execute', 'web_search'],
+        autoApprove,
+        requireConfirmation,
         blocked: [],
       },
     };
@@ -986,13 +1013,17 @@ export class McpService {
 
     for (const toolDef of BUILTIN_TOOLS) {
       try {
-        const existing = await db.mcpTool.findUnique({
-          where: { name: toolDef.name },
+        const equivalents = BUILTIN_TOOL_EQUIVALENTS[toolDef.name] ?? [];
+        const namesToCheck = [toolDef.name, ...equivalents];
+
+        const existing = await db.mcpTool.findFirst({
+          where: { name: { in: namesToCheck } },
+          select: { name: true },
         });
 
         if (existing) {
           skipped++;
-          logger.debug('Builtin tool already exists, skipping', { name: toolDef.name });
+          logger.debug('Builtin tool already exists, skipping', { name: toolDef.name, existingName: existing.name });
           continue;
         }
 
@@ -1242,6 +1273,138 @@ export class McpService {
       const errorMsg = execError.stderr?.trim() || execError.message || 'Unknown execution error';
       throw new Error(`Command failed: ${errorMsg}`);
     }
+  }
+
+  /**
+   * search_code: Search within the project workspace for a query string/regex.
+   * Uses ripgrep (`rg`) when available, with a safe fallback for environments without it.
+   */
+  private async executeSearchCode(params: Record<string, unknown>): Promise<string> {
+    const query = params.query as string;
+    if (!query || typeof query !== 'string') {
+      throw new Error('Missing or invalid "query" parameter');
+    }
+
+    const searchPath = (params.path as string | undefined) ?? '.';
+    const limitRaw = params.limit as number | undefined;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Number(limitRaw), 1), 500) : 50;
+
+    const resolvedRoot = path.resolve(searchPath);
+
+    logger.info('Searching code', { query, path: resolvedRoot, limit });
+
+    // Preferred: ripgrep
+    try {
+      const { stdout } = await execFileAsync('rg', [
+        '--line-number',
+        '--column',
+        '--no-heading',
+        '--color',
+        'never',
+        '--max-count',
+        String(limit),
+        query,
+        resolvedRoot,
+      ], {
+        cwd: process.cwd(),
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env },
+      });
+
+      const matches = stdout
+        .split('\n')
+        .map((l) => l.trimEnd())
+        .filter(Boolean)
+        .map((line) => {
+          // Format: file:line:column:match
+          const first = line.indexOf(':');
+          const second = first >= 0 ? line.indexOf(':', first + 1) : -1;
+          const third = second >= 0 ? line.indexOf(':', second + 1) : -1;
+          if (first < 0 || second < 0 || third < 0) {
+            return { raw: line };
+          }
+          const file = line.slice(0, first);
+          const lineNum = Number(line.slice(first + 1, second));
+          const colNum = Number(line.slice(second + 1, third));
+          const preview = line.slice(third + 1);
+          return {
+            file,
+            line: Number.isFinite(lineNum) ? lineNum : null,
+            column: Number.isFinite(colNum) ? colNum : null,
+            preview,
+          };
+        });
+
+      return JSON.stringify({
+        query,
+        path: resolvedRoot,
+        count: matches.length,
+        matches,
+        engine: 'rg',
+      }, null, 2);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException & { code?: number; stderr?: string };
+
+      // `rg` exit code 1 means "no matches"
+      if (typeof err.code === 'number' && err.code === 1) {
+        return JSON.stringify({
+          query,
+          path: resolvedRoot,
+          count: 0,
+          matches: [],
+          engine: 'rg',
+        }, null, 2);
+      }
+
+      // If `rg` isn't available, fall back to a simple substring scan.
+      if (err.code === 'ENOENT') {
+        logger.warn('ripgrep (rg) not found, using fallback search', { query, path: resolvedRoot });
+      } else {
+        logger.warn('ripgrep search failed, using fallback search', { query, path: resolvedRoot, error: err.message });
+      }
+    }
+
+    // Fallback: naive scan for substring matches in common code/text extensions.
+    const extensions = [
+      '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+      '.json', '.md', '.prisma', '.sql', '.yml', '.yaml',
+      '.txt', '.env', '.env.example',
+    ];
+
+    const entries = await this.listDirectory(resolvedRoot, true, extensions);
+    const files = entries.filter((e) => e.type === 'file').slice(0, 5000);
+
+    const matches: Array<{ file: string; line: number; column: number; preview: string }> = [];
+    for (const fileEntry of files) {
+      if (matches.length >= limit) break;
+      try {
+        const content = await fs.readFile(fileEntry.path, 'utf-8');
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (matches.length >= limit) break;
+          const idx = lines[i].indexOf(query);
+          if (idx !== -1) {
+            matches.push({
+              file: fileEntry.path,
+              line: i + 1,
+              column: idx + 1,
+              preview: lines[i].slice(0, 500),
+            });
+          }
+        }
+      } catch {
+        // Skip unreadable/binary files
+      }
+    }
+
+    return JSON.stringify({
+      query,
+      path: resolvedRoot,
+      count: matches.length,
+      matches,
+      engine: 'fallback',
+      note: 'Fallback uses simple substring matching (not regex).',
+    }, null, 2);
   }
 
   /**

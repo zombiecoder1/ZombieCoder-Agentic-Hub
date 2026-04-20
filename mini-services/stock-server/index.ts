@@ -1,1651 +1,1460 @@
-// ─── ZombieCoder Stock Server ─────────────────────────────────────────────────
-// Real streaming proxy service that connects to actual AI provider APIs
-// (Ollama, OpenAI, etc.) and streams responses.
-// No mocks. No simulations. No z-ai-web-dev-sdk.
-// Bun runtime · TypeScript · Port 9999
+#!/usr/bin/env bun
+/**
+ * ZombieCoder WebSocket Server v2.0
+ * Experimental Agent-First Architecture
+ * 
+ * Architecture Principles:
+ * 1. Agent-first: Every conversation starts with agent selection
+ * 2. Gateway-mediated: Uses main app API, never direct provider
+ * 3. Unified sessions: Integrates with main ChatSession system
+ * 4. Standard events: Consistent JSON format for all messages
+ * 5. Heartbeat with ACK: Proper ping-pong for connection health
+ * 6. Transparent identity: Clean ZombieCoder branding
+ * 
+ * @author Sahon Srabon
+ * @version 2.0.0
+ */
 
-const SERVER_VERSION = "1.0.0";
-const SERVER_PORT = Number(process.env.PORT || 9999);
-const POWERED_BY_HEADER = "ZombieCoder-Masood-by-SahonSrabon";
-const DEFAULT_OLLAMA_ENDPOINT = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
-const MAX_PENDING_REQUESTS = 100;
-const CONNECTION_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
-const WS_TIMEOUT_MS = 3 * 60 * 1000;
-const STOCK_DEFAULT_MODEL = process.env.STOCK_DEFAULT_MODEL || "llama3.2:1b";
+import type { ServerWebSocket } from "bun";
 
-const NEXTJS_BASE_URL = process.env.NEXTJS_BASE_URL || 'http://localhost:3000';
+// ─── Configuration ─────────────────────────────────────────────────────────
+const SERVER_PORT = Number(process.env.WS_PORT || 9998);
+const NEXTJS_BASE_URL = process.env.NEXTJS_BASE_URL || "http://localhost:3000";
+const CLIENT_IDLE_TIMEOUT_MS = Number(process.env.WS_IDLE_TIMEOUT_MS || 30 * 60 * 1000); // default: 30 minutes
+const HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
+const HEARTBEAT_TIMEOUT_MS = 60_000; // 60 seconds for ACK
+const HTTP_TIMEOUT_MS = Number(process.env.WS_HTTP_TIMEOUT_MS || 6_000);
+const STREAM_TIMEOUT_MS = Number(process.env.WS_STREAM_TIMEOUT_MS || 5 * 60 * 1000);
 
-async function postStockEvent(payload: Record<string, unknown>): Promise<void> {
-  try {
-    await fetch(`${NEXTJS_BASE_URL.replace(/\/+$/, '')}/api/stock/events`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  } catch {
-    // ignore
-  }
-}
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-}
-
-function handleClients(): Response {
-  const now = Date.now();
-  const clients = Array.from(activeEditorClients.entries()).map(([clientId, rec]) => ({
-    clientId,
-    sessionId: rec.sessionId,
-    connectedForMs: now - rec.createdAt,
-    lastPingMsAgo: now - rec.lastPing,
-  }));
-  return jsonResponse({ success: true, data: { clients }, timestamp: new Date().toISOString() });
-}
-
-const activeEditorClients = new Map<
-  string,
-  {
-    ws: any;
-    sessionId: string;
-    createdAt: number;
-    lastPing: number;
-    heartbeatIntervalId: ReturnType<typeof setInterval>;
-    timeoutId: ReturnType<typeof setTimeout>;
-  }
->();
-
-function wsTestHtml(): string {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>ZombieCoder WS Test</title>
-    <style>
-      body{font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial;margin:20px;}
-      #log{white-space:pre-wrap;border:1px solid #ddd;padding:12px;border-radius:8px;height:320px;overflow:auto;}
-      input,button{padding:8px 10px;margin:6px 0;}
-      button{cursor:pointer;}
-    </style>
-  </head>
-  <body>
-    <h2>ZombieCoder Stock Server WebSocket Test</h2>
-    <div><b>Status:</b> <span id="status">disconnected</span></div>
-    <div><b>ClientId:</b> <span id="clientId">-</span></div>
-    <div><b>SessionId:</b> <span id="sessionId">-</span></div>
-
-    <h3>Chat (stream)</h3>
-    <input id="prompt" style="width:100%" placeholder="Say something..." />
-    <button id="send">Send</button>
-
-    <h3>MCP tool execute</h3>
-    <input id="tool" style="width:100%" value="system_info" />
-    <textarea id="input" style="width:100%;height:80px" placeholder='{"detail":true}'></textarea>
-    <button id="exec">Execute Tool</button>
-
-    <h3>Log</h3>
-    <div id="log"></div>
-
-    <script>
-      const statusEl = document.getElementById('status');
-      const logEl = document.getElementById('log');
-      const clientIdEl = document.getElementById('clientId');
-      const sessionIdEl = document.getElementById('sessionId');
-      const promptEl = document.getElementById('prompt');
-      const toolEl = document.getElementById('tool');
-      const inputEl = document.getElementById('input');
-
-      function log(msg){
-        logEl.textContent += msg + "\\n";
-        logEl.scrollTop = logEl.scrollHeight;
-      }
-
-      const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/';
-      const ws = new WebSocket(wsUrl);
-      let sessionId = '';
-
-      ws.onopen = () => {
-        statusEl.textContent = 'connected';
-        log('WS connected: ' + wsUrl);
-        ws.send(JSON.stringify({ type: 'register', editor: 'browser-test' }));
-      };
-      ws.onclose = () => {
-        statusEl.textContent = 'disconnected';
-        log('WS closed');
-      };
-      ws.onerror = (e) => log('WS error: ' + String(e));
-      ws.onmessage = (ev) => {
-        try{
-          const msg = JSON.parse(ev.data);
-          if(msg.type === 'session'){
-            clientIdEl.textContent = msg.clientId;
-            sessionIdEl.textContent = msg.sessionId;
-            sessionId = msg.sessionId;
-          }
-          log('<= ' + ev.data);
-        }catch{
-          log('<= ' + String(ev.data));
-        }
-      };
-
-      document.getElementById('send').onclick = () => {
-        const id = crypto.randomUUID();
-        ws.send(JSON.stringify({ type: 'chat', id, prompt: promptEl.value, stream: true }));
-        log('=> chat ' + id);
-      };
-
-      document.getElementById('exec').onclick = () => {
-        const id = crypto.randomUUID();
-        let input = {};
-        try{ input = inputEl.value ? JSON.parse(inputEl.value) : {}; }catch{ input = { raw: inputEl.value }; }
-        ws.send(JSON.stringify({ type: 'mcp_execute', id, toolName: toolEl.value, input, sessionId }));
-        log('=> mcp_execute ' + id);
-      };
-    </script>
-  </body>
-</html>`;
-}
-
-interface ProviderConfig {
-  endpoint: string;
-  model: string;
-  apiKey?: string;
-  provider?: "ollama" | "openai";
-}
-
-interface Usage {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-}
-
-interface OpenAIChatRequest {
-  model: string;
-  messages: ChatMessage[];
-  stream?: boolean;
-  temperature?: number;
-  max_tokens?: number;
-  provider?: string;
-  providerConfig?: ProviderConfig;
-}
-
-interface OllamaChatRequest {
-  model: string;
-  messages: ChatMessage[];
-  stream?: boolean;
-  options?: {
-    temperature?: number;
-    num_predict?: number;
-  };
-}
-
-interface OllamaGenerateRequest {
-  model: string;
-  prompt: string;
-  stream?: boolean;
-  options?: {
-    temperature?: number;
-    num_predict?: number;
-  };
-}
-
-type WebSocketIncoming =
-  | {
-      type: 'register';
-      clientId?: string;
-      workspace?: string;
-      editor?: string;
-    }
-  | {
-      type: 'chat';
-      id: string;
-      prompt?: string;
-      messages?: ChatMessage[];
-      provider?: string;
-      providerConfig?: ProviderConfig;
-      systemPrompt?: string;
-      stream?: boolean;
-      model?: string;
-      temperature?: number;
-      max_tokens?: number;
-    }
-  | {
-      type: 'mcp_execute';
-      id: string;
-      toolName: string;
-      input?: unknown;
-      agentId?: string;
-      sessionId?: string;
-    };
-
-interface WebSocketOutgoingChunk {
-  id: string;
-  type: "chunk";
-  content: string;
-  finishReason?: string | null;
-}
-
-interface WebSocketOutgoingDone {
-  id: string;
-  type: "done";
-  finishReason?: string;
-}
-
-interface WebSocketOutgoingError {
-  id: string;
-  type: "error";
-  error: string;
-}
-
-interface WebSocketOutgoingSession {
-  type: 'session';
+interface WebSocketClient {
+  ws: ServerWebSocket;
   clientId: string;
   sessionId: string;
-  createdAt: string;
+  hasRealSession: boolean; // true if session exists in DB
+  agentId?: string;
+  kind: "unknown" | "browser" | "editor";
+  clientName?: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  createdAt: number;
+  lastPing: number;
+  lastPong: number;
+  lastActivity: number;
+  heartbeatIntervalId: Timer;
+  heartbeatTimeoutId?: Timer;
+  timeoutId: Timer;
+  isAlive: boolean;
 }
 
-interface WebSocketOutgoingToolResult {
-  id: string;
-  type: 'tool_result';
-  toolName: string;
-  output: unknown;
+interface StandardEvent {
+  version: "2.0";
+  timestamp: string;
+  event: string;
+  agentId?: string;
+  sessionId?: string;
+  conversationId?: string;
+  payload?: Record<string, unknown>;
+  error?: string;
 }
 
-type WebSocketOutgoing =
-  | WebSocketOutgoingChunk
-  | WebSocketOutgoingDone
-  | WebSocketOutgoingError
-  | WebSocketOutgoingSession
-  | WebSocketOutgoingToolResult;
-
-interface PendingRequest {
-  id: string;
-  startTime: number;
-  abortController: AbortController;
+interface ChatRequest {
+  type: "chat.start";
+  agentId: string;
+  messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+  sessionId?: string;
+  stream?: boolean;
 }
 
-// ─── Server State ─────────────────────────────────────────────────────────────
-
-const SERVER_START_TIME = Date.now();
-const pendingRequests = new Map<string, PendingRequest>();
-
-function getUptime(): number {
-  return Math.floor((Date.now() - SERVER_START_TIME) / 1000);
+interface AgentSelectRequest {
+  type: "agent.select";
+  agentId: string;
 }
 
-function log(level: "INFO" | "WARN" | "ERROR", requestId: string, message: string): void {
-  const ts = new Date().toISOString();
-  const uptime = getUptime();
-  console.log(`[${ts}] [${level}] [req=${requestId}] [uptime=${uptime}s] ${message}`);
+interface HeartbeatPong {
+  type: "heartbeat.pong";
+  timestamp: string;
 }
 
-function trackRequest(id: string): AbortController {
-  if (pendingRequests.size >= MAX_PENDING_REQUESTS) {
-    throw new Error(`Server overloaded: ${MAX_PENDING_REQUESTS} pending requests`);
-  }
-  const abortController = new AbortController();
-  pendingRequests.set(id, { id, startTime: Date.now(), abortController });
-  return abortController;
+interface ClientRegisterRequest {
+  type: "client.register";
+  kind?: "browser" | "editor";
+  name?: string;
 }
 
-function untrackRequest(id: string): void {
-  pendingRequests.delete(id);
+interface SessionResumeRequest {
+  type: "session.resume";
+  sessionId: string;
 }
 
-function resolveProvider(
-  providerConfig?: ProviderConfig,
-  providerHint?: string,
-  modelOverride?: string,
-): { endpoint: string; model: string; format: "ollama" | "openai"; apiKey?: string } {
-  const model = modelOverride || STOCK_DEFAULT_MODEL;
-  
-  // Logical resolution: Check model name and hints
-  const isOpenAIFormat = 
-    providerConfig?.provider === "openai" || 
-    providerHint === "openai" ||
-    model.startsWith("gpt-5.4") || 
-    model.includes("gemini-3.0-flash");
+interface SessionClearRequest {
+  type: "session.clear";
+}
 
-  const format: "ollama" | "openai" = isOpenAIFormat ? "openai" : "ollama";
+// ─── State Management ───────────────────────────────────────────────────────
 
-  if (providerConfig?.endpoint && providerConfig?.model) {
-    return {
-      endpoint: providerConfig.endpoint.replace(/\/+$/, ""),
-      model: providerConfig.model,
-      format,
-      apiKey: providerConfig.apiKey,
-    };
-  }
+const activeClients = new Map<string, WebSocketClient>();
 
-  if (format === "openai") {
-    // If it's gemini but no endpoint provided, we assume it's handled via local proxy or env
-    let endpoint = "https://api.openai.com/v1";
-    let apiKey = process.env.OPENAI_API_KEY;
+// ─── Logging ──────────────────────────────────────────────────────────────────
 
-    if (model.includes("gemini")) {
-      // Use configured Gemini API key if available
-      apiKey = process.env.GEMINI_API_KEY || apiKey;
-      // If there's a specific Gemini OpenAI proxy endpoint, use it
-      endpoint = process.env.GEMINI_BASE_URL || endpoint;
-    }
+function log(level: "INFO" | "WARN" | "ERROR", clientId: string, message: string): void {
+  const timestamp = new Date().toISOString();
+  const prefix = `[${timestamp}] [${level}] [${clientId || "SYSTEM"}]`;
+  console.log(`${prefix} ${message}`);
+}
 
-    return { endpoint, model, format: "openai", apiKey };
-  }
+// ─── Event Builder ───────────────────────────────────────────────────────────
 
+function buildEvent(
+  eventType: string,
+  client: WebSocketClient,
+  payload?: Record<string, unknown>,
+  error?: string
+): StandardEvent {
   return {
-    endpoint: DEFAULT_OLLAMA_ENDPOINT,
-    model,
-    format: "ollama",
-  };
-}
-
-// ─── Provider Proxy Functions ─────────────────────────────────────────────────
-
-async function proxyOllamaChatStream(
-  endpoint: string,
-  model: string,
-  messages: ChatMessage[],
-  signal: AbortSignal,
-  onChunk: (text: string) => void,
-  options?: { temperature?: number; maxTokens?: number },
-): Promise<void> {
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    stream: true,
-  };
-  if (options?.temperature !== undefined) {
-    body.options = { temperature: options.temperature };
-  }
-  if (options?.maxTokens !== undefined) {
-    body.options = { ...(body.options as Record<string, unknown>), num_predict: options.maxTokens };
-  }
-
-  const response = await fetch(`${endpoint}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Ollama chat stream error ${response.status}: ${errorText}`);
-  }
-
-  if (!response.body) {
-    throw new Error("Ollama response body is null");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed) as {
-          message?: { content?: string };
-          done?: boolean;
-        };
-        if (parsed.message?.content) {
-          onChunk(parsed.message.content);
-        }
-      } catch {
-        // Skip malformed JSON lines
-      }
-    }
-  }
-
-  // Process any remaining buffer
-  if (buffer.trim()) {
-    try {
-      const parsed = JSON.parse(buffer.trim()) as {
-        message?: { content?: string };
-        done?: boolean;
-      };
-      if (parsed.message?.content) {
-        onChunk(parsed.message.content);
-      }
-    } catch {
-      // Skip
-    }
-  }
-}
-
-async function proxyOllamaChatNonStream(
-  endpoint: string,
-  model: string,
-  messages: ChatMessage[],
-  signal: AbortSignal,
-  options?: { temperature?: number; maxTokens?: number },
-): Promise<{ content: string; model: string; usage?: Usage }> {
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    stream: true,
-  };
-  if (options?.temperature !== undefined) {
-    body.options = { temperature: options.temperature };
-  }
-  if (options?.maxTokens !== undefined) {
-    body.options = { ...(body.options as Record<string, unknown>), num_predict: options.maxTokens };
-  }
-
-  const response = await fetch(`${endpoint}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Ollama chat error ${response.status}: ${errorText}`);
-  }
-
-  const data = (await response.json()) as {
-    message?: { role?: string; content?: string };
-    model?: string;
-  };
-  return {
-    content: data.message?.content || "",
-    model: data.model || model,
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-  };
-}
-
-async function proxyOpenAIChatStream(
-  endpoint: string,
-  model: string,
-  messages: ChatMessage[],
-  signal: AbortSignal,
-  onChunk: (text: string) => void,
-  options?: { temperature?: number; maxTokens?: number },
-): Promise<void> {
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    stream: true,
-  };
-  if (options?.temperature !== undefined) body.temperature = options.temperature;
-  if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-
-  const response = await fetch(`${endpoint}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI chat stream error ${response.status}: ${errorText}`);
-  }
-
-  if (!response.body) {
-    throw new Error("OpenAI response body is null");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data: ")) continue;
-      const data = trimmed.slice(6);
-      if (data === "[DONE]") continue;
-
-      try {
-        const parsed = JSON.parse(data) as {
-          choices?: Array<{
-            delta?: { content?: string };
-            finish_reason?: string | null;
-          }>;
-        };
-        const deltaContent = parsed.choices?.[0]?.delta?.content;
-        if (deltaContent) {
-          onChunk(deltaContent);
-        }
-      } catch {
-        // Skip malformed JSON
-      }
-    }
-  }
-
-  // Process remaining buffer
-  if (buffer.trim()) {
-    const trimmed = buffer.trim();
-    if (trimmed.startsWith("data: ")) {
-      const data = trimmed.slice(6);
-      if (data !== "[DONE]") {
-        try {
-          const parsed = JSON.parse(data) as {
-            choices?: Array<{
-              delta?: { content?: string };
-              finish_reason?: string | null;
-            }>;
-          };
-          const deltaContent = parsed.choices?.[0]?.delta?.content;
-          if (deltaContent) {
-            onChunk(deltaContent);
-          }
-        } catch {
-          // Skip
-        }
-      }
-    }
-  }
-}
-
-async function proxyOpenAIChatNonStream(
-  endpoint: string,
-  model: string,
-  messages: ChatMessage[],
-  signal: AbortSignal,
-  options?: { temperature?: number; maxTokens?: number },
-): Promise<{ content: string; model: string; usage?: Usage }> {
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    stream: true,
-  };
-  if (options?.temperature !== undefined) body.temperature = options.temperature;
-  if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-
-  const response = await fetch(`${endpoint}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI chat error ${response.status}: ${errorText}`);
-  }
-
-  const data = (await response.json()) as {
-    choices?: Array<{
-      message?: { content?: string; role?: string };
-      finish_reason?: string;
-    }>;
-    model?: string;
-    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-  };
-
-  return {
-    content: data.choices?.[0]?.message?.content || "",
-    model: data.model || model,
-    usage: data.usage
-      ? {
-          prompt_tokens: data.usage.prompt_tokens ?? 0,
-          completion_tokens: data.usage.completion_tokens ?? 0,
-          total_tokens: data.usage.total_tokens ?? 0,
-        }
-      : undefined,
-  };
-}
-
-// ─── Unified stream proxy ─────────────────────────────────────────────────────
-
-async function proxyStream(
-  resolved: { endpoint: string; model: string; format: "ollama" | "openai"; apiKey?: string },
-  messages: ChatMessage[],
-  signal: AbortSignal,
-  onChunk: (text: string) => void,
-  options?: { temperature?: number; maxTokens?: number },
-): Promise<void> {
-  if (resolved.format === "openai") {
-    await proxyOpenAIChatStream(
-      resolved.endpoint,
-      resolved.model,
-      messages,
-      signal,
-      onChunk,
-      options,
-    );
-  } else {
-    await proxyOllamaChatStream(
-      resolved.endpoint,
-      resolved.model,
-      messages,
-      signal,
-      onChunk,
-      options,
-    );
-  }
-}
-
-async function proxyNonStream(
-  resolved: { endpoint: string; model: string; format: "ollama" | "openai"; apiKey?: string },
-  messages: ChatMessage[],
-  signal: AbortSignal,
-  options?: { temperature?: number; maxTokens?: number },
-): Promise<{ content: string; model: string; usage?: Usage }> {
-  if (resolved.format === "openai") {
-    return proxyOpenAIChatNonStream(
-      resolved.endpoint,
-      resolved.model,
-      messages,
-      signal,
-      options,
-    );
-  }
-
-  return proxyOllamaChatNonStream(
-    resolved.endpoint,
-    resolved.model,
-    messages,
-    signal,
-    options,
-  );
-}
-
-// ─── Route Handlers ───────────────────────────────────────────────────────────
-
-function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Powered-By": POWERED_BY_HEADER,
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, X-Powered-By",
-    },
-  });
-}
-
-function handleHealth(): Response {
-  return jsonResponse({
-    status: "ok",
-    service: "ZombieCoder Stock Server",
-    version: SERVER_VERSION,
-    uptime: getUptime(),
+    version: "2.0",
     timestamp: new Date().toISOString(),
-    pendingRequests: pendingRequests.size,
-    port: SERVER_PORT,
-  });
+    event: eventType,
+    agentId: client.agentId,
+    sessionId: client.sessionId,
+    payload,
+    error,
+  };
 }
 
-async function handleOpenAIChatCompletions(body: OpenAIChatRequest): Promise<Response> {
-  const requestId = crypto.randomUUID();
+// ─── Session Management ──────────────────────────────────────────────────────
 
-  if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
-    log("WARN", requestId, "POST /v1/chat/completions - missing or empty messages");
-    return jsonResponse(
-      { error: { message: "messages is required and must be a non-empty array", type: "invalid_request_error" } },
-      400,
-    );
-  }
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number = HTTP_TIMEOUT_MS): Promise<Response> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  return fetch(url, { ...init, signal });
+}
 
-  let abortController: AbortController;
+function safeJson(text: string): any | null {
   try {
-    abortController = trackRequest(requestId);
-  } catch (err) {
-    log("ERROR", requestId, `POST /v1/chat/completions - ${err}`);
-    return jsonResponse(
-      { error: { message: "Server overloaded, try again later", type: "server_error" } },
-      503,
-    );
-  }
-
-  log("INFO", requestId, `POST /v1/chat/completions - model=${body.model || "default"} stream=${!!body.stream}`);
-
-  try {
-    // Set connection timeout
-    const timeoutId = setTimeout(() => abortController.abort(), CONNECTION_TIMEOUT_MS);
-
-    const resolved = resolveProvider(body.providerConfig, body.provider, body.model);
-    const options = {
-      temperature: body.temperature,
-      maxTokens: body.max_tokens,
-    };
-
-    if (body.stream) {
-      // SSE streaming response
-      const stream = new ReadableStream({
-        async start(controller) {
-          const encoder = new TextEncoder();
-          const chatId = `chatcmpl-${requestId}`;
-          const created = Math.floor(Date.now() / 1000);
-
-          function sendSSE(data: string): void {
-            controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-          }
-
-          try {
-            await proxyStream(resolved, body.messages, abortController.signal, (text) => {
-              const chunk = {
-                id: chatId,
-                object: "chat.completion.chunk",
-                created,
-                model: resolved.model,
-                choices: [
-                  {
-                    index: 0,
-                    delta: { content: text },
-                    finish_reason: null,
-                  },
-                ],
-              };
-              sendSSE(JSON.stringify(chunk));
-            });
-
-            // Final done chunk
-            const doneChunk = {
-              id: chatId,
-              object: "chat.completion.chunk",
-              created,
-              model: resolved.model,
-              choices: [
-                {
-                  index: 0,
-                  delta: {},
-                  finish_reason: "stop",
-                },
-              ],
-            };
-            sendSSE(JSON.stringify(doneChunk));
-            sendSSE("[DONE]");
-          } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            if (errorMessage !== "The operation was aborted") {
-              log("ERROR", requestId, `Stream error: ${errorMessage}`);
-              // Send error as SSE
-              const errorChunk = {
-                id: chatId,
-                object: "chat.completion.chunk",
-                created,
-                model: resolved.model,
-                choices: [
-                  {
-                    index: 0,
-                    delta: { content: `[Error: ${errorMessage}]` },
-                    finish_reason: "error",
-                  },
-                ],
-              };
-              sendSSE(JSON.stringify(errorChunk));
-            }
-          } finally {
-            clearTimeout(timeoutId);
-            untrackRequest(requestId);
-            controller.close();
-          }
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-          "X-Powered-By": POWERED_BY_HEADER,
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, X-Powered-By",
-        },
-      });
-    } else {
-      // Non-streaming JSON response
-      const result = await proxyNonStream(resolved, body.messages, abortController.signal, options);
-      clearTimeout(timeoutId);
-
-      return jsonResponse({
-        id: `chatcmpl-${requestId}`,
-        object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
-        model: result.model,
-        choices: [
-          {
-            index: 0,
-            message: {
-              role: "assistant",
-              content: result.content,
-            },
-            finish_reason: "stop",
-          },
-        ],
-        usage: {
-          prompt_tokens: result.usage?.prompt_tokens ?? 0,
-          completion_tokens: result.usage?.completion_tokens ?? 0,
-          total_tokens: result.usage?.total_tokens ?? 0,
-        },
-      });
-    }
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    if (errorMessage === "The operation was aborted") {
-      log("WARN", requestId, "Request aborted (timeout)");
-      return jsonResponse(
-        { error: { message: "Request timed out", type: "timeout_error" } },
-        504,
-      );
-    }
-    log("ERROR", requestId, `Error: ${errorMessage}`);
-    return jsonResponse(
-      { error: { message: errorMessage, type: "server_error" } },
-      500,
-    );
-  } finally {
-    untrackRequest(requestId);
-  }
-}
-
-async function handleOllamaChat(body: OllamaChatRequest): Promise<Response> {
-  const requestId = crypto.randomUUID();
-
-  if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
-    log("WARN", requestId, "POST /api/chat - missing or empty messages");
-    return jsonResponse({ error: "messages is required and must be a non-empty array" }, 400);
-  }
-
-  let abortController: AbortController;
-  try {
-    abortController = trackRequest(requestId);
-  } catch (err) {
-    log("ERROR", requestId, `POST /api/chat - ${err}`);
-    return jsonResponse({ error: "Server overloaded, try again later" }, 503);
-  }
-
-  log("INFO", requestId, `POST /api/chat - model=${body.model || "default"} stream=${!!body.stream}`);
-
-  try {
-    const resolved = resolveProvider(undefined, undefined, body.model);
-    const options = {
-      temperature: body.options?.temperature,
-      maxTokens: body.options?.num_predict,
-    };
-
-    if (body.stream) {
-      // NDJSON streaming
-      const stream = new ReadableStream({
-        async start(controller) {
-          const encoder = new TextEncoder();
-          const startTime = Date.now();
-          let fullContent = '';
-
-          try {
-            await proxyStream(resolved, body.messages, abortController.signal, (text) => {
-              fullContent += text;
-              const chunk = {
-                model: resolved.model,
-                created_at: new Date().toISOString(),
-                message: { role: "assistant", content: text },
-                done: true,
-              };
-              controller.enqueue(encoder.encode(JSON.stringify(chunk) + "\n"));
-            }, options);
-
-            const totalDuration = Date.now() - startTime;
-            const finalChunk = {
-              model: resolved.model,
-              created_at: new Date().toISOString(),
-              message: { role: "assistant", content: "" },
-              done: true,
-              total_duration: totalDuration * 1_000_000, // nanoseconds
-              eval_count: fullContent.length / 4, // Rough estimation if not provided
-              eval_duration: 0,
-            };
-            controller.enqueue(encoder.encode(JSON.stringify(finalChunk) + "\n"));
-          } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            if (errorMessage !== "The operation was aborted") {
-              log("ERROR", requestId, `NDJSON stream error: ${errorMessage}`);
-            }
-          } finally {
-            untrackRequest(requestId);
-            controller.close();
-          }
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "application/x-ndjson",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-          "X-Powered-By": POWERED_BY_HEADER,
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
-    } else {
-      const result = await proxyNonStream(resolved, body.messages, abortController.signal, options);
-      return jsonResponse({
-        model: result.model,
-        created_at: new Date().toISOString(),
-        message: { role: "assistant", content: result.content },
-        done: true,
-        total_duration: 0,
-        eval_count: result.content.length / 4,
-      });
-    }
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    if (errorMessage === "The operation was aborted") {
-      log("WARN", requestId, "Request aborted (timeout)");
-      return jsonResponse({ error: "Request timed out" }, 504);
-    }
-    log("ERROR", requestId, `Error: ${errorMessage}`);
-    return jsonResponse({ error: errorMessage }, 500);
-  } finally {
-    untrackRequest(requestId);
-  }
-}
-
-async function handleOllamaGenerate(body: OllamaGenerateRequest): Promise<Response> {
-  const requestId = crypto.randomUUID();
-
-  if (!body.prompt || typeof body.prompt !== "string") {
-    log("WARN", requestId, "POST /api/generate - missing prompt");
-    return jsonResponse({ error: "prompt is required and must be a string" }, 400);
-  }
-
-  log("INFO", requestId, `POST /api/generate - model=${body.model || "default"} stream=${!!body.stream}`);
-
-  // Wrap prompt into messages format
-  const messages: ChatMessage[] = [{ role: "user", content: body.prompt }];
-
-  // Delegate to Ollama chat handler
-  return handleOllamaChat({
-    model: body.model,
-    messages,
-    stream: body.stream,
-    options: body.options,
-  });
-}
-
-// ─── MCP SSE Handler ────────────────────────────────────────────────────────
-// MCP (Model Context Protocol) SSE endpoint for editor/agent integration
-
-const mcpSessions = new Map<string, ReadableStreamDefaultController>();
-
-function handleMcpSSE(req: Request): Response {
-  const sessionId = crypto.randomUUID();
-  const encoder = new TextEncoder();
-
-  const stream = new ReadableStream({
-    start(controller) {
-      mcpSessions.set(sessionId, controller);
-
-      // Send endpoint event
-      const endpointEvent = `event: endpoint\ndata: ${JSON.stringify({ uri: `/messages?sessionId=${sessionId}` })}\n\n`;
-      controller.enqueue(encoder.encode(endpointEvent));
-
-      log("INFO", "mcp-sse", `Session ${sessionId} connected`);
-
-      // Keep-alive ping every 30 seconds
-      const pingInterval = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(`:ping\n\n`));
-        } catch {
-          clearInterval(pingInterval);
-          mcpSessions.delete(sessionId);
-        }
-      }, 30000);
-
-      // Cleanup on abort
-      const cleanup = () => {
-        clearInterval(pingInterval);
-        mcpSessions.delete(sessionId);
-        log("INFO", "mcp-sse", `Session ${sessionId} disconnected`);
-      };
-
-      // Close after 5 minutes of inactivity
-      setTimeout(() => {
-        try {
-          controller.close();
-        } catch {
-          // ignore
-        }
-        cleanup();
-      }, 5 * 60 * 1000);
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Powered-By": POWERED_BY_HEADER,
-      "Access-Control-Allow-Origin": "*",
-    },
-  });
-}
-
-interface McpJsonRpcRequest {
-  jsonrpc: "2.0";
-  id: number | string;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-interface McpTool {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-}
-
-const availableTools: McpTool[] = [
-  {
-    name: "chat",
-    description: "Send a chat message to the AI model and get a response",
-    inputSchema: {
-      type: "object",
-      properties: {
-        messages: { type: "array", description: "Array of chat messages" },
-        model: { type: "string", description: "Model name (optional)" },
-        stream: { type: "boolean", description: "Whether to stream the response" },
-      },
-      required: ["messages"],
-    },
-  },
-  {
-    name: "system_info",
-    description: "Get system information about the stock server",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "list_clients",
-    description: "List all connected editor clients",
-    inputSchema: { type: "object", properties: {} },
-  },
-];
-
-async function handleMcpMessage(req: Request): Promise<Response> {
-  const url = new URL(req.url);
-  const sessionId = url.searchParams.get("sessionId");
-
-  if (!sessionId || !mcpSessions.has(sessionId)) {
-    return jsonResponse({ error: { code: -32001, message: "Invalid or expired session" } }, 400);
-  }
-
-  let body: McpJsonRpcRequest;
-  try {
-    body = (await req.json()) as McpJsonRpcRequest;
+    return text ? JSON.parse(text) : null;
   } catch {
-    return jsonResponse({ error: { code: -32700, message: "Parse error" } }, 400);
+    return null;
   }
-
-  if (body.jsonrpc !== "2.0") {
-    return jsonResponse({ error: { code: -32600, message: "Invalid Request" } }, 400);
-  }
-
-  const { id, method, params = {} } = body;
-
-  // Handle MCP methods
-  if (method === "initialize") {
-    const result = {
-      protocolVersion: "2024-11-05",
-      capabilities: {
-        tools: { listChanged: true },
-        logging: {},
-      },
-      serverInfo: {
-        name: "zombiecoder-stock-server",
-        version: SERVER_VERSION,
-      },
-    };
-    return jsonResponse({ jsonrpc: "2.0", id, result });
-  }
-
-  if (method === "tools/list") {
-    const result = { tools: availableTools };
-    return jsonResponse({ jsonrpc: "2.0", id, result });
-  }
-
-  if (method === "tools/call") {
-    const toolName = params.name as string;
-    const toolInput = (params.arguments as Record<string, unknown>) || {};
-
-    try {
-      let toolResult: unknown;
-
-      switch (toolName) {
-        case "system_info":
-          toolResult = {
-            server: "ZombieCoder Stock Server",
-            version: SERVER_VERSION,
-            uptime: getUptime(),
-            pendingRequests: pendingRequests.size,
-            activeClients: activeEditorClients.size,
-            mcpSessions: mcpSessions.size,
-          };
-          break;
-
-        case "list_clients":
-          toolResult = Array.from(activeEditorClients.entries()).map(([clientId, rec]) => ({
-            clientId,
-            sessionId: rec.sessionId,
-            connectedForMs: Date.now() - rec.createdAt,
-          }));
-          break;
-
-        case "chat": {
-          const messages = (toolInput.messages as ChatMessage[]) || [];
-          const model = (toolInput.model as string) || STOCK_DEFAULT_MODEL;
-          const stream = toolInput.stream === true;
-
-          const resolved = resolveProvider(undefined, undefined, model);
-
-          if (stream) {
-            // For streaming, we return a session ID that the client can use to get chunks via SSE
-            const chatSessionId = crypto.randomUUID();
-            toolResult = {
-              sessionId: chatSessionId,
-              status: "streaming",
-              note: "Streaming responses sent via WebSocket or separate SSE connection",
-            };
-
-            // Start streaming (async, don't await)
-            void (async () => {
-              try {
-                await proxyStream(resolved, messages, AbortSignal.timeout(WS_TIMEOUT_MS), (text) => {
-                  // Send chunks to all MCP sessions (simplified)
-                  const chunkEvent = `event: chat_chunk\ndata: ${JSON.stringify({ sessionId: chatSessionId, chunk: text })}\n\n`;
-                  for (const [sid, controller] of mcpSessions.entries()) {
-                    try {
-                      const encoder = new TextEncoder();
-                      controller.enqueue(encoder.encode(chunkEvent));
-                    } catch {
-                      mcpSessions.delete(sid);
-                    }
-                  }
-                });
-
-                // Send completion
-                const doneEvent = `event: chat_done\ndata: ${JSON.stringify({ sessionId: chatSessionId })}\n\n`;
-                for (const [sid, controller] of mcpSessions.entries()) {
-                  try {
-                    const encoder = new TextEncoder();
-                    controller.enqueue(encoder.encode(doneEvent));
-                  } catch {
-                    mcpSessions.delete(sid);
-                  }
-                }
-              } catch (err) {
-                const errorMessage = err instanceof Error ? err.message : String(err);
-                const errorEvent = `event: chat_error\ndata: ${JSON.stringify({ sessionId: chatSessionId, error: errorMessage })}\n\n`;
-                for (const [sid, controller] of mcpSessions.entries()) {
-                  try {
-                    const encoder = new TextEncoder();
-                    controller.enqueue(encoder.encode(errorEvent));
-                  } catch {
-                    mcpSessions.delete(sid);
-                  }
-                }
-              }
-            })();
-          } else {
-            // Non-streaming
-            const result = await proxyNonStream(resolved, messages, AbortSignal.timeout(WS_TIMEOUT_MS));
-            toolResult = {
-              content: result.content,
-              model: result.model,
-              usage: result.usage,
-            };
-          }
-          break;
-        }
-
-        default:
-          return jsonResponse(
-            { jsonrpc: "2.0", id, error: { code: -32601, message: `Tool '${toolName}' not found` } },
-            200
-          );
-      }
-
-      return jsonResponse({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(toolResult) }] } });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      return jsonResponse(
-        { jsonrpc: "2.0", id, error: { code: -32603, message: errorMessage } },
-        200
-      );
-    }
-  }
-
-  return jsonResponse({ jsonrpc: "2.0", id, error: { code: -32601, message: `Method '${method}' not found` } }, 200);
 }
 
-// ─── WebSocket Handler (Bun WebSocket API) ───────────────────────────────────
-
-function getClientIdFromWs(ws: unknown): string | null {
-  return (ws as { __clientId?: string } | null | undefined)?.__clientId ?? null;
-}
-
-async function handleWebSocketMessage(ws: any, rawMessage: string): Promise<void> {
-  let data: WebSocketIncoming;
+async function createChatSession(params: { agentId?: string; providerId?: string; title?: string }): Promise<string | null> {
   try {
-    data = JSON.parse(rawMessage) as WebSocketIncoming;
+    const response = await fetchWithTimeout(`${NEXTJS_BASE_URL}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        ...(params.providerId ? { providerId: params.providerId } : {}),
+        ...(params.title ? { title: params.title } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const json = (await response.json().catch(() => null)) as any;
+    const session = json?.data || json;
+    const sessionId = session?.id;
+    return typeof sessionId === "string" ? sessionId : null;
   } catch {
-    ws.send(JSON.stringify({ id: 'unknown', type: 'error', error: 'Invalid JSON' } satisfies WebSocketOutgoingError));
-    return;
+    return null;
   }
+}
 
-  const clientId = getClientIdFromWs(ws);
-  if (!clientId) {
-    ws.send(JSON.stringify({ id: 'unknown', type: 'error', error: 'Missing client session' } satisfies WebSocketOutgoingError));
-    return;
-  }
-
-  const rec = activeEditorClients.get(clientId);
-  if (!rec) {
-    ws.send(JSON.stringify({ id: 'unknown', type: 'error', error: 'Session not found' } satisfies WebSocketOutgoingError));
-    return;
-  }
-
-  if (data.type === 'register') {
-    rec.lastPing = Date.now();
-    return;
-  }
-
-  if (data.type === 'mcp_execute') {
-    const requestId = data.id;
-    try {
-      const baseUrl = process.env.NEXTJS_BASE_URL || 'http://localhost:3000';
-      const apiKey = process.env.UAS_API_KEY || '';
-      const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/mcp/execute`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(apiKey ? { 'x-api-key': apiKey } : {}),
-        },
-        body: JSON.stringify({
-          toolName: data.toolName,
-          input: data.input ?? {},
-          agentId: data.agentId,
-          sessionId: data.sessionId ?? rec.sessionId,
-        }),
-      });
-
-      const json = await res.json().catch(() => null);
-      const payload = (json && typeof json === 'object') ? (json as Record<string, unknown>) : null;
-      if (!res.ok) {
-        const errMsg = typeof payload?.error === 'string' ? (payload.error as string) : `Tool execute failed: ${res.status}`;
-        ws.send(JSON.stringify({ id: requestId, type: 'error', error: errMsg } satisfies WebSocketOutgoingError));
-        void postStockEvent({
-          type: 'ws_request_log',
-          clientId,
-          sessionId: rec.sessionId,
-          requestId,
-          messageType: 'mcp_execute',
-          status: 'error',
-          errorMessage: errMsg,
-          createdAt: new Date().toISOString(),
-        });
-        return;
-      }
-
-      const toolResult: WebSocketOutgoingToolResult = {
-        id: requestId,
-        type: 'tool_result',
-        toolName: data.toolName,
-        output: payload?.data ?? json,
-      };
-      ws.send(JSON.stringify(toolResult));
-      void postStockEvent({
-        type: 'ws_request_log',
-        clientId,
-        sessionId: rec.sessionId,
-        requestId,
-        messageType: 'mcp_execute',
-        status: 'success',
-        createdAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      ws.send(JSON.stringify({ id: requestId, type: 'error', error: errorMessage } satisfies WebSocketOutgoingError));
-      void postStockEvent({
-        type: 'ws_request_log',
-        clientId,
-        sessionId: rec.sessionId,
-        requestId,
-        messageType: 'mcp_execute',
-        status: 'error',
-        errorMessage,
-        createdAt: new Date().toISOString(),
-      });
-    }
-    return;
-  }
-
-  if (data.type !== 'chat') {
-    ws.send(JSON.stringify({ id: 'unknown', type: 'error', error: 'Unsupported message type' } satisfies WebSocketOutgoingError));
-    return;
-  }
-
-  if (!data.id || (!data.prompt && !(data.messages && data.messages.length > 0))) {
-    ws.send(JSON.stringify({
-      id: data.id || 'unknown',
-      type: 'error',
-      error: 'id and (prompt or messages) are required',
-    } satisfies WebSocketOutgoingError));
-    return;
-  }
-
-  const requestId = data.id;
-  log('INFO', requestId, `WS message - hasPrompt=${!!data.prompt} hasMessages=${!!data.messages?.length}`);
-
-  let messages: ChatMessage[] = [];
-  if (data.systemPrompt) {
-    messages.push({ role: 'system', content: data.systemPrompt });
-  }
-  if (data.messages && data.messages.length > 0) {
-    messages = messages.concat(data.messages);
-  }
-  if (data.prompt) {
-    messages.push({ role: 'user', content: data.prompt });
-  }
-
-  if (messages.length === 0) {
-    ws.send(JSON.stringify({ id: requestId, type: 'error', error: 'No messages to send' } satisfies WebSocketOutgoingError));
-    return;
-  }
-
-  const isStream = data.stream !== true;
-
-  const requestStart = Date.now();
-
+async function sessionExists(sessionId: string): Promise<boolean> {
   try {
-    const resolved = resolveProvider(data.providerConfig, data.provider, data.model);
-    if (isStream) {
-      await proxyStream(resolved, messages, AbortSignal.timeout(WS_TIMEOUT_MS), (text) => {
-        const chunk: WebSocketOutgoingChunk = { id: requestId, type: 'chunk', content: text, finishReason: null };
-        try {
-          ws.send(JSON.stringify(chunk));
-        } catch {
-          // ignore
-        }
-      });
-      ws.send(JSON.stringify({ id: requestId, type: 'done', finishReason: 'stop' } satisfies WebSocketOutgoingDone));
-    } else {
-      const result = await proxyNonStream(
-        resolved,
-        messages,
-        AbortSignal.timeout(WS_TIMEOUT_MS),
-        { temperature: data.temperature, maxTokens: data.max_tokens },
-      );
-      ws.send(JSON.stringify({ id: requestId, type: 'chunk', content: result.content, finishReason: 'stop' } satisfies WebSocketOutgoingChunk));
-      ws.send(JSON.stringify({ id: requestId, type: 'done', finishReason: 'stop' } satisfies WebSocketOutgoingDone));
-    }
+    const response = await fetchWithTimeout(
+      `${NEXTJS_BASE_URL}/api/sessions/${encodeURIComponent(sessionId)}`,
+      { method: "GET", headers: { Accept: "application/json" } }
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
 
+async function deleteSession(sessionId: string): Promise<boolean> {
+  try {
+    const response = await fetchWithTimeout(
+      `${NEXTJS_BASE_URL}/api/sessions/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE", headers: { Accept: "application/json" } }
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function postStockEvent(body: unknown): Promise<void> {
+  try {
+    await fetchWithTimeout(`${NEXTJS_BASE_URL}/api/stock/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // best-effort
+  }
+}
+
+function refreshIdleTimeout(client: WebSocketClient): void {
+  client.lastActivity = Date.now();
+  if (client.timeoutId) clearTimeout(client.timeoutId);
+  client.timeoutId = setTimeout(() => {
+    log("WARN", client.clientId, `Idle timeout (${CLIENT_IDLE_TIMEOUT_MS}ms)`);
+    client.ws.close(4008, "Idle timeout");
+  }, CLIENT_IDLE_TIMEOUT_MS);
+}
+
+// ─── Agent Resolution ─────────────────────────────────────────────────────────
+
+async function resolveAgent(agentId: string): Promise<{ name: string; systemPrompt: string | null; providerId: string | null } | null> {
+  try {
+    const response = await fetchWithTimeout(`${NEXTJS_BASE_URL}/api/agents/${agentId}`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) return null;
+    const result = await response.json();
+    // API returns { success: true, data: agent }
+    const agent = result.data || result;
+    if (!agent || !agent.name) return null;
+    return {
+      name: agent.name,
+      systemPrompt: agent.systemPrompt || null,
+      providerId: agent.providerId || (agent.provider?.id) || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Chat Processing ─────────────────────────────────────────────────────────
+
+async function processChat(
+  client: WebSocketClient,
+  request: ChatRequest
+): Promise<void> {
+  const startTime = Date.now();
+  const requestId = crypto.randomUUID();
+  
+  log("INFO", client.clientId, `Starting chat with agent: ${request.agentId}`);
+
+  // Validate agent
+  const agent = await resolveAgent(request.agentId);
+  if (!agent) {
+    const errorEvent = buildEvent("error", client, undefined, "Agent not found");
+    sendToClient(client, errorEvent);
     void postStockEvent({
-      type: 'ws_request_log',
-      clientId,
-      sessionId: rec.sessionId,
+      type: "ws_request_log",
       requestId,
-      messageType: 'chat',
-      providerType: resolved.format,
-      model: resolved.model,
-      latencyMs: Date.now() - requestStart,
-      status: 'success',
+      clientId: client.clientId,
+      sessionId: client.sessionId,
+      messageType: "chat",
+      status: "error",
+      errorMessage: "Agent not found",
+      createdAt: new Date().toISOString(),
+    });
+    return;
+  }
+
+  // Update client's agent
+  client.agentId = request.agentId;
+
+  try {
+    // Send message.start event
+    const startEvent = buildEvent("message.start", client, {
+      agentName: agent.name,
+      timestamp: new Date().toISOString(),
+      requestId,
+    });
+    broadcastToSession(client, startEvent);
+
+    // Call main app API (NEVER direct provider)
+    // Only send sessionId if it's confirmed by API (hasRealSession flag)
+    const apiResponse = await fetchWithTimeout(`${NEXTJS_BASE_URL}/api/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: request.messages,
+        agentId: request.agentId,
+        ...(client.hasRealSession && { sessionId: client.sessionId }),
+        stream: true,
+      }),
+    }, STREAM_TIMEOUT_MS);
+
+    if (!apiResponse.ok || !apiResponse.body) {
+      throw new Error(`API request failed: ${apiResponse.status}`);
+    }
+
+    // Stream chunks to client
+    const reader = apiResponse.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let tokenCountEstimated = 0;
+    let providerType: string | null = null;
+    let model: string | null = null;
+    let tokenCountReported: number | null = null;
+    let latencyMsReported: number | null = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() || "";
+
+      for (const block of blocks) {
+        const lines = block.split("\n");
+        const eventLine = lines.find((l) => l.startsWith("event: "));
+        const dataLine = lines.find((l) => l.startsWith("data: "));
+
+        if (eventLine && dataLine) {
+          const event = eventLine.slice(7).trim();
+          const data = safeJson(dataLine.slice(6));
+          if (!data) continue;
+
+          if (event === "chunk" && data.content) {
+            tokenCountEstimated += estimateTokens(data.content);
+            const chunkEvent = buildEvent("message.chunk", client, {
+              ...data,
+              requestId,
+            });
+            broadcastToSession(client, chunkEvent);
+          }
+
+          if (event === "session" && data.sessionId) {
+            client.sessionId = data.sessionId;
+            client.hasRealSession = true; // Mark as confirmed
+            const sessionEvent = buildEvent("session.update", client, {
+              sessionId: data.sessionId,
+              requestId,
+            });
+            broadcastToSession(client, sessionEvent);
+            void postStockEvent({
+              type: "client_ping",
+              clientId: client.clientId,
+              sessionId: client.sessionId,
+              pingAt: new Date().toISOString(),
+            });
+          }
+
+          if (event === "done") {
+            providerType = typeof data.provider === "string" ? data.provider : null;
+            model = typeof data.model === "string" ? data.model : null;
+            tokenCountReported = typeof data.tokenCount === "number" ? data.tokenCount : null;
+            latencyMsReported = typeof data.latencyMs === "number" ? data.latencyMs : null;
+          }
+
+          if (event === "error" && data.error) {
+            throw new Error(typeof data.error === "string" ? data.error : "Stream error");
+          }
+        }
+      }
+    }
+
+    // Send message.end event
+    const latency = Date.now() - startTime;
+    const endEvent = buildEvent("message.end", client, {
+      tokenCount: tokenCountReported ?? tokenCountEstimated,
+      latencyMs: latency,
+      finishReason: "stop",
+      requestId,
+    });
+    broadcastToSession(client, endEvent);
+
+    log("INFO", client.clientId, `Chat completed: ${tokenCountReported ?? tokenCountEstimated} tokens, ${latency}ms`);
+    void postStockEvent({
+      type: "ws_request_log",
+      requestId,
+      clientId: client.clientId,
+      sessionId: client.sessionId,
+      messageType: "chat",
+      providerType,
+      model,
+      latencyMs: latencyMsReported ?? latency,
+      status: "success",
+      metadata: {
+        tokenCount: tokenCountReported ?? tokenCountEstimated,
+        agentId: client.agentId ?? null,
+      },
       createdAt: new Date().toISOString(),
     });
 
-    log('INFO', requestId, `WS request completed (${isStream ? 'streamed' : 'non-stream'})`);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    log('ERROR', requestId, `WS error: ${errorMessage}`);
-    ws.send(JSON.stringify({ id: requestId, type: 'error', error: errorMessage } satisfies WebSocketOutgoingError));
+    log("ERROR", client.clientId, `Chat error: ${errorMessage}`);
+    const errorEvent = buildEvent("error", client, undefined, errorMessage);
+    sendToClient(client, errorEvent);
     void postStockEvent({
-      type: 'ws_request_log',
-      clientId,
-      sessionId: rec.sessionId,
+      type: "ws_request_log",
       requestId,
-      messageType: 'chat',
-      latencyMs: Date.now() - requestStart,
-      status: 'error',
+      clientId: client.clientId,
+      sessionId: client.sessionId,
+      messageType: "chat",
+      status: "error",
       errorMessage,
       createdAt: new Date().toISOString(),
     });
   }
 }
 
-// ─── Main Server ──────────────────────────────────────────────────────────────
+function estimateTokens(text: string): number {
+  // Rough estimation: ~4 chars per token
+  return Math.ceil(text.length / 4);
+}
+
+function sendToClient(client: WebSocketClient, event: StandardEvent): void {
+  try {
+    client.ws.send(JSON.stringify(event));
+  } catch {
+    // ignore
+  }
+}
+
+function broadcastToSession(sourceClient: WebSocketClient, event: StandardEvent): void {
+  const payload = JSON.stringify(event);
+  for (const client of activeClients.values()) {
+    if (!sourceClient.hasRealSession || !client.hasRealSession) {
+      if (client.clientId === sourceClient.clientId) {
+        try { client.ws.send(payload); } catch {}
+      }
+      continue;
+    }
+    if (client.sessionId !== sourceClient.sessionId) continue;
+    try {
+      client.ws.send(payload);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function getClientsSnapshot(): { count: number; clients: Array<Record<string, unknown>> } {
+  const clients = Array.from(activeClients.values()).map((c) => ({
+    clientId: c.clientId,
+    kind: c.kind,
+    name: c.clientName || null,
+    agentId: c.agentId || null,
+    sessionId: c.sessionId,
+    hasRealSession: c.hasRealSession,
+    ipAddress: c.ipAddress ?? null,
+    userAgent: c.userAgent ?? null,
+    createdAt: new Date(c.createdAt).toISOString(),
+    lastPingAt: new Date(c.lastPing).toISOString(),
+    lastPongAt: new Date(c.lastPong).toISOString(),
+    lastActivityAt: new Date(c.lastActivity).toISOString(),
+    isAlive: c.isAlive,
+  }));
+  return { count: clients.length, clients };
+}
+
+function broadcastClientsUpdate(): void {
+  const snapshot = getClientsSnapshot();
+  const event: StandardEvent = {
+    version: "2.0",
+    timestamp: new Date().toISOString(),
+    event: "clients.update",
+    payload: snapshot as unknown as Record<string, unknown>,
+  };
+  const payload = JSON.stringify(event);
+  for (const client of activeClients.values()) {
+    try { client.ws.send(payload); } catch {}
+  }
+}
+
+// ─── Heartbeat Management ────────────────────────────────────────────────────
+
+function startHeartbeat(client: WebSocketClient): void {
+  // Send ping every 30 seconds
+  const intervalId = setInterval(() => {
+    if (!client.isAlive) {
+      log("WARN", client.clientId, "Client not responding, terminating");
+      clearInterval(intervalId);
+      client.ws.close(4008, "Heartbeat timeout");
+      return;
+    }
+
+    client.isAlive = false;
+    const pingEvent = buildEvent("heartbeat.ping", client, {
+      timestamp: new Date().toISOString(),
+    });
+    
+    try {
+      sendToClient(client, pingEvent);
+      log("INFO", client.clientId, "Heartbeat ping sent");
+
+      // Set timeout for ACK
+      client.heartbeatTimeoutId = setTimeout(() => {
+        if (!client.isAlive) {
+          log("WARN", client.clientId, "No heartbeat ACK received");
+          client.ws.close(4008, "No heartbeat ACK");
+        }
+      }, HEARTBEAT_TIMEOUT_MS);
+
+    } catch {
+      // Client disconnected
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+
+  client.heartbeatIntervalId = intervalId;
+}
+
+function handleHeartbeatPong(client: WebSocketClient): void {
+  client.isAlive = true;
+  client.lastPong = Date.now();
+  refreshIdleTimeout(client);
+  
+  // Clear the timeout
+  if (client.heartbeatTimeoutId) {
+    clearTimeout(client.heartbeatTimeoutId);
+    client.heartbeatTimeoutId = undefined;
+  }
+  
+  log("INFO", client.clientId, "Heartbeat pong received");
+  void postStockEvent({
+    type: "client_ping",
+    clientId: client.clientId,
+    sessionId: client.sessionId,
+    pingAt: new Date().toISOString(),
+  });
+}
+
+// ─── Message Handler ─────────────────────────────────────────────────────────
+
+async function handleMessage(client: WebSocketClient, rawMessage: string): Promise<void> {
+  try {
+    const data = JSON.parse(rawMessage);
+    const messageType = data.type || data.event;
+
+    log("INFO", client.clientId, `Received: ${messageType}`);
+    refreshIdleTimeout(client);
+
+    switch (messageType) {
+      case "client.register": {
+        const req = data as ClientRegisterRequest;
+        if (req.kind === "browser" || req.kind === "editor") {
+          client.kind = req.kind;
+        }
+        if (typeof req.name === "string" && req.name.trim()) {
+          client.clientName = req.name.trim().slice(0, 80);
+        }
+        sendToClient(client, buildEvent("client.registered", client, { kind: client.kind, name: client.clientName || null }));
+        broadcastClientsUpdate();
+        break;
+      }
+
+      case "session.resume": {
+        const req = data as SessionResumeRequest;
+        if (!req.sessionId || typeof req.sessionId !== "string") {
+          sendToClient(client, buildEvent("error", client, undefined, "Missing sessionId"));
+          break;
+        }
+        const ok = await sessionExists(req.sessionId);
+        if (!ok) {
+          sendToClient(client, buildEvent("error", client, undefined, "Session not found"));
+          break;
+        }
+        client.sessionId = req.sessionId;
+        client.hasRealSession = true;
+        sendToClient(client, buildEvent("session.resumed", client, { sessionId: client.sessionId }));
+        void postStockEvent({ type: "bind_chat_session", clientId: client.clientId, chatSessionId: client.sessionId });
+        void postStockEvent({ type: "client_ping", clientId: client.clientId, sessionId: client.sessionId, pingAt: new Date().toISOString() });
+        broadcastClientsUpdate();
+        break;
+      }
+
+      case "session.clear": {
+        const _req = data as SessionClearRequest;
+        if (client.hasRealSession) {
+          await deleteSession(client.sessionId);
+        }
+        client.sessionId = crypto.randomUUID();
+        client.hasRealSession = false;
+        client.agentId = undefined;
+        sendToClient(client, buildEvent("session.cleared", client, { sessionId: client.sessionId }));
+        void postStockEvent({ type: "client_ping", clientId: client.clientId, sessionId: client.sessionId, pingAt: new Date().toISOString() });
+        broadcastClientsUpdate();
+        break;
+      }
+
+      case "agent.select":
+        const agentRequest = data as AgentSelectRequest;
+        client.agentId = agentRequest.agentId;
+        const agent = await resolveAgent(agentRequest.agentId);
+        
+        if (agent) {
+          if (!client.hasRealSession) {
+            const created = await createChatSession({
+              agentId: agentRequest.agentId,
+              providerId: agent.providerId || undefined,
+              title: `WS: ${agent.name}`,
+            });
+            if (created) {
+              client.sessionId = created;
+              client.hasRealSession = true;
+              sendToClient(client, buildEvent("session.update", client, { sessionId: created }));
+              void postStockEvent({ type: "bind_chat_session", clientId: client.clientId, chatSessionId: client.sessionId });
+              void postStockEvent({ type: "client_ping", clientId: client.clientId, sessionId: client.sessionId, pingAt: new Date().toISOString() });
+            }
+          }
+          const confirmEvent = buildEvent("agent.selected", client, {
+            agentId: agentRequest.agentId,
+            agentName: agent.name,
+          });
+          sendToClient(client, confirmEvent);
+          log("INFO", client.clientId, `Agent selected: ${agent.name}`);
+          broadcastClientsUpdate();
+        } else {
+          const errorEvent = buildEvent("error", client, undefined, "Agent not found");
+          sendToClient(client, errorEvent);
+        }
+        break;
+
+      case "chat.start":
+        const chatRequest = data as ChatRequest;
+        if (!chatRequest.agentId && !client.agentId) {
+          const errorEvent = buildEvent("error", client, undefined, "No agent selected");
+          sendToClient(client, errorEvent);
+          return;
+        }
+        // Use request agentId or fall back to client's selected agent
+        chatRequest.agentId = chatRequest.agentId || client.agentId!;
+        if (!client.hasRealSession) {
+          const resolved = await resolveAgent(chatRequest.agentId);
+          const created = await createChatSession({
+            agentId: chatRequest.agentId,
+            providerId: resolved?.providerId || undefined,
+            title: resolved?.name ? `WS: ${resolved.name}` : "WS Session",
+          });
+          if (created) {
+            client.sessionId = created;
+            client.hasRealSession = true;
+            sendToClient(client, buildEvent("session.update", client, { sessionId: created }));
+            void postStockEvent({ type: "bind_chat_session", clientId: client.clientId, chatSessionId: client.sessionId });
+            void postStockEvent({ type: "client_ping", clientId: client.clientId, sessionId: client.sessionId, pingAt: new Date().toISOString() });
+            broadcastClientsUpdate();
+          }
+        }
+        await processChat(client, chatRequest);
+        break;
+
+      case "heartbeat.pong":
+        handleHeartbeatPong(client);
+        break;
+
+      default:
+        log("WARN", client.clientId, `Unknown message type: ${messageType}`);
+        const errorEvent = buildEvent("error", client, undefined, `Unknown type: ${messageType}`);
+        sendToClient(client, errorEvent);
+    }
+
+  } catch (err) {
+    log("ERROR", client.clientId, `Message parse error: ${err}`);
+    const errorEvent = buildEvent("error", client, undefined, "Invalid message format");
+    sendToClient(client, errorEvent);
+  }
+}
+
+// ─── WebSocket Server ─────────────────────────────────────────────────────────
 
 const server = Bun.serve({
   port: SERVER_PORT,
   hostname: "0.0.0.0",
-  idleTimeout: 30, // 5 minutes for SSE connections
 
   fetch(req, server) {
     const url = new URL(req.url);
-    const method = req.method;
 
-    // CORS preflight
-    if (method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, X-Powered-By",
-          "Access-Control-Max-Age": "86400",
-          "X-Powered-By": POWERED_BY_HEADER,
+    // WebSocket upgrade endpoint
+    if (url.pathname === "/ws") {
+      const userAgent = req.headers.get("user-agent");
+      const ip = (server as any).requestIP?.(req)?.address || req.headers.get("x-forwarded-for") || null;
+      const success = server.upgrade(req, {
+        data: {
+          ipAddress: typeof ip === "string" ? ip : null,
+          userAgent: userAgent || null,
         },
       });
+      if (success) {
+        return undefined; // Upgraded to WebSocket
+      }
+      return new Response("WebSocket upgrade failed", { status: 400 });
     }
 
-    // Health check
-    if (method === "GET" && url.pathname === "/health") {
-      return handleHealth();
-    }
-
-    if (method === 'GET' && url.pathname === '/clients') {
-      return handleClients();
-    }
-
-    if (method === 'GET' && url.pathname === '/ws-test') {
-      return new Response(wsTestHtml(), {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'X-Powered-By': POWERED_BY_HEADER,
-        },
+    // Health check endpoint
+    if (url.pathname === "/health") {
+      return Response.json({
+        status: "ok",
+        version: "2.0.0",
+        clients: activeClients.size,
+        idleTimeoutMs: CLIENT_IDLE_TIMEOUT_MS,
+        timestamp: new Date().toISOString(),
       });
     }
 
-    // MCP SSE endpoint for editor/agent integration
-    if (method === 'GET' && url.pathname === '/sse') {
-      return handleMcpSSE(req);
-    }
-
-    // MCP message endpoint
-    if (method === 'POST' && url.pathname === '/messages') {
-      return handleMcpMessage(req);
-    }
-
-    // OpenAI-compatible chat completions
-    if (method === "POST" && url.pathname === "/v1/chat/completions") {
-      return req.json().then((body: unknown) => {
-        return handleOpenAIChatCompletions(body as OpenAIChatRequest);
-      }).catch((err: unknown) => {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        return jsonResponse({ error: { message: `Invalid JSON: ${errorMessage}`, type: "invalid_request_error" } }, 400);
+    // Active clients snapshot
+    if (url.pathname === "/clients") {
+      const snapshot = getClientsSnapshot();
+      return Response.json({
+        success: true,
+        clients: snapshot.clients,
+        data: snapshot,
+        timestamp: new Date().toISOString(),
       });
     }
 
-    // Ollama-compatible chat
-    if (method === "POST" && url.pathname === "/api/chat") {
-      return req.json().then((body: unknown) => {
-        return handleOllamaChat(body as OllamaChatRequest);
-      }).catch((err: unknown) => {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        return jsonResponse({ error: `Invalid JSON: ${errorMessage}` }, 400);
+    // Same-origin proxies for the test page (avoid CORS)
+    if (url.pathname === "/api/agents" && req.method === "GET") {
+      return proxyNext(req, `${NEXTJS_BASE_URL}/api/agents`);
+    }
+    if (url.pathname.startsWith("/api/agents/") && req.method === "GET") {
+      const id = url.pathname.slice("/api/agents/".length);
+      return proxyNext(req, `${NEXTJS_BASE_URL}/api/agents/${encodeURIComponent(id)}`);
+    }
+    if (url.pathname.startsWith("/api/sessions/") && (req.method === "GET" || req.method === "DELETE")) {
+      const id = url.pathname.slice("/api/sessions/".length);
+      return proxyNext(req, `${NEXTJS_BASE_URL}/api/sessions/${encodeURIComponent(id)}`);
+    }
+
+    // Test page
+    if (url.pathname === "/" || url.pathname === "/test") {
+      return new Response(getTestPage(), {
+        headers: { "Content-Type": "text/html" },
       });
     }
 
-    // Ollama-compatible generate
-    if (method === "POST" && url.pathname === "/api/generate") {
-      return req.json().then((body: unknown) => {
-        return handleOllamaGenerate(body as OllamaGenerateRequest);
-      }).catch((err: unknown) => {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        return jsonResponse({ error: `Invalid JSON: ${errorMessage}` }, 400);
-      });
-    }
-
-    // WebSocket upgrade
-    if (url.pathname === "/" && server.upgrade(req)) {
-      return; // Upgrade handled by websocket handler
-    }
-
-    // 404 for everything else
-    return jsonResponse(
-      {
-        error: "Not Found",
-        availableEndpoints: [
-          "GET  /health",
-          "GET  /clients            (Connected editor clients)",
-          "GET  /ws-test            (WebSocket integration test UI)",
-          "GET  /sse                (MCP SSE endpoint for agents)",
-          "POST /messages           (MCP message endpoint)",
-          "POST /v1/chat/completions  (OpenAI-compatible)",
-          "POST /api/chat              (Ollama-compatible)",
-          "POST /api/generate          (Ollama-compatible)",
-          "WS   /                      (WebSocket streaming)",
-        ],
-      },
-      404,
-    );
+    return new Response("Not Found", { status: 404 });
   },
 
   websocket: {
     open(ws) {
-      log('INFO', 'ws', 'WebSocket connection established');
-
       const clientId = crypto.randomUUID();
       const sessionId = crypto.randomUUID();
-      const createdAt = Date.now();
+      const now = Date.now();
+      const data = ws.data as any;
 
-      (ws as unknown as { __clientId?: string }).__clientId = clientId;
+      log("INFO", clientId, "WebSocket connection established");
 
-      const heartbeatIntervalId = setInterval(() => {
-        try {
-          ws.send(JSON.stringify({ type: 'ping', timestamp: new Date().toISOString() }));
-          void postStockEvent({
-            type: 'client_ping',
-            clientId,
-            sessionId,
-            pingAt: new Date().toISOString(),
-          });
-        } catch {
-          // ignore
-        }
-      }, 30_000);
-
-      const timeoutId = setTimeout(() => {
-        log('WARN', 'ws', 'WebSocket connection timeout (3 minutes)');
-        try {
-          ws.close(4008, 'Connection timeout');
-        } catch {
-          // ignore
-        }
-      }, WS_TIMEOUT_MS);
-
-      activeEditorClients.set(clientId, {
+      // Create client record
+      const client: WebSocketClient = {
         ws,
-        sessionId,
-        createdAt,
-        lastPing: Date.now(),
-        heartbeatIntervalId,
-        timeoutId,
-      });
-
-      void postStockEvent({
-        type: 'client_connected',
         clientId,
         sessionId,
-        connectedAt: new Date(createdAt).toISOString(),
-      });
+        hasRealSession: false, // Will be set to true when API confirms
+        kind: "unknown",
+        ipAddress: data?.ipAddress ?? null,
+        userAgent: data?.userAgent ?? null,
+        createdAt: now,
+        lastPing: now,
+        lastPong: now,
+        lastActivity: now,
+        heartbeatIntervalId: null as unknown as Timer,
+        timeoutId: null as unknown as Timer,
+        isAlive: true,
+      };
 
-      try {
-        const sessionMsg: WebSocketOutgoingSession = {
-          type: 'session',
-          clientId,
-          sessionId,
-          createdAt: new Date(createdAt).toISOString(),
-        };
-        ws.send(JSON.stringify(sessionMsg));
-      } catch {
-        // ignore
-      }
+      // Set idle timeout (refreshed on activity)
+      refreshIdleTimeout(client);
+
+      // Store clientId in ws.data for retrieval in message handlers
+      (ws.data as unknown as { clientId: string; ipAddress?: string | null; userAgent?: string | null }) = {
+        clientId,
+        ipAddress: client.ipAddress ?? null,
+        userAgent: client.userAgent ?? null,
+      };
+
+      // Store client
+      activeClients.set(clientId, client);
+
+      // Start heartbeat
+      startHeartbeat(client);
+
+      // Send session.init event
+      const sessionEvent = buildEvent("session.init", client, {
+        clientId,
+        sessionId,
+        message: "Welcome to ZombieCoder WebSocket Server v2.0",
+        instructions: [
+          "0. (Optional) Register client using: { type: 'client.register', kind: 'browser|editor', name: '...' }",
+          "1. Select an agent using: { type: 'agent.select', agentId: '...' }",
+          "2. Start chat using: { type: 'chat.start', messages: [...] }",
+          "3. Respond to heartbeat.ping with heartbeat.pong",
+        ],
+      });
+      
+      ws.send(JSON.stringify(sessionEvent));
+
+      log("INFO", clientId, `Session initialized: ${sessionId}`);
+      void postStockEvent({
+        type: "client_connected",
+        clientId,
+        sessionId,
+        ipAddress: client.ipAddress ?? null,
+        userAgent: client.userAgent ?? null,
+        connectedAt: new Date().toISOString(),
+      });
+      broadcastClientsUpdate();
     },
+
     message(ws, message) {
-      const text = typeof message === 'string' ? message : Buffer.from(message).toString('utf8');
-      void handleWebSocketMessage(ws, text);
-    },
-    close(ws, code, reason) {
-      const clientId = getClientIdFromWs(ws);
-      if (clientId) {
-        const rec = activeEditorClients.get(clientId);
-        if (rec) {
-          clearInterval(rec.heartbeatIntervalId);
-          clearTimeout(rec.timeoutId);
-          void postStockEvent({
-            type: 'client_disconnected',
-            clientId,
-            sessionId: rec.sessionId,
-            disconnectedAt: new Date().toISOString(),
-            reason: typeof reason === 'string' ? reason : String(reason || ''),
-          });
-        }
-        activeEditorClients.delete(clientId);
+      const clientId = getClientId(ws);
+      if (!clientId) {
+        ws.close(4001, "Unknown client");
+        return;
       }
-      log('INFO', 'ws', `WebSocket closed: code=${code} reason=${reason || 'none'}`);
+
+      const client = activeClients.get(clientId);
+      if (!client) {
+        ws.close(4002, "Client not found");
+        return;
+      }
+
+      // Update last activity
+      client.lastPing = Date.now();
+      client.lastActivity = Date.now();
+
+      // Handle message
+      const text = message.toString();
+      handleMessage(client, text);
+    },
+
+    close(ws, code, reason) {
+      const clientId = getClientId(ws);
+      if (!clientId) return;
+
+      const client = activeClients.get(clientId);
+      if (client) {
+        // Cleanup
+        clearInterval(client.heartbeatIntervalId);
+        clearTimeout(client.timeoutId);
+        if (client.heartbeatTimeoutId) {
+          clearTimeout(client.heartbeatTimeoutId);
+        }
+
+        activeClients.delete(clientId);
+        log("INFO", clientId, `Connection closed: code=${code}, reason=${reason || "none"}`);
+        void postStockEvent({
+          type: "client_disconnected",
+          clientId,
+          sessionId: client.sessionId,
+          disconnectedAt: new Date().toISOString(),
+          reason: reason ? String(reason) : null,
+        });
+        broadcastClientsUpdate();
+      }
+    },
+
+    ping(ws) {
+      // Bun handles ping/pong at protocol level
+      const clientId = getClientId(ws);
+      if (clientId) {
+        const client = activeClients.get(clientId);
+        if (client) {
+          client.lastPing = Date.now();
+          client.lastActivity = Date.now();
+        }
+      }
+    },
+
+    pong(ws) {
+      // Bun handles ping/pong at protocol level
+      const clientId = getClientId(ws);
+      if (clientId) {
+        const client = activeClients.get(clientId);
+        if (client) {
+          client.lastPong = Date.now();
+          client.lastActivity = Date.now();
+        }
+      }
     },
   },
 });
 
+function getClientId(ws: ServerWebSocket): string | undefined {
+  // Store clientId in websocket data
+  return (ws.data as unknown as { clientId?: string })?.clientId;
+}
+
+async function proxyNext(req: Request, target: string): Promise<Response> {
+  try {
+    const headers = new Headers(req.headers);
+    headers.delete("host");
+
+    const init: RequestInit = {
+      method: req.method,
+      headers,
+    };
+
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      init.body = await req.text();
+    }
+
+    const res = await fetchWithTimeout(target, init);
+    const body = await res.arrayBuffer();
+    const outHeaders = new Headers(res.headers);
+    outHeaders.set("Cache-Control", "no-store");
+    return new Response(body, { status: res.status, headers: outHeaders });
+  } catch (e) {
+    return Response.json(
+      {
+        success: false,
+        error: e instanceof Error ? e.message : "Proxy failed",
+        timestamp: new Date().toISOString(),
+      },
+      { status: 502 }
+    );
+  }
+}
+
+// ─── Test Page ───────────────────────────────────────────────────────────────
+
+function getTestPage(): string {
+  return `<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZombieCoder WebSocket v2.0 - Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, rgba(34,197,94,0.18), transparent 60%),
+                  radial-gradient(900px 500px at 90% 0%, rgba(59,130,246,0.18), transparent 55%),
+                  linear-gradient(135deg, #070a12 0%, #111827 100%);
+      color: #e5e7eb;
+      padding: 28px 18px;
+      min-height: 100vh;
+    }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 {
+      background: linear-gradient(90deg, #22c55e, #3b82f6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+      letter-spacing: -0.02em;
+    }
+    .subtitle { color: #94a3b8; margin-bottom: 18px; }
+
+    .grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 14px; }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: rgba(2, 6, 23, 0.55);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+      backdrop-filter: blur(10px);
+    }
+
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .row.space { justify-content: space-between; }
+
+    .status {
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 800;
+    }
+    .status.connected { background: #22c55e; color: white; }
+    .status.disconnected { background: #ef4444; color: white; }
+    .status.connecting { background: #f59e0b; color: white; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(148, 163, 184, 0.08);
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 800;
+      margin-left: 10px;
+    }
+    .pill b { color: #e5e7eb; }
+
+    input, select, button {
+      padding: 11px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(2, 6, 23, 0.75);
+      color: #e5e7eb;
+      font-size: 14px;
+    }
+    input:focus, select:focus { outline: none; border-color: rgba(34,197,94,0.65); }
+    button {
+      background: linear-gradient(90deg, #22c55e, #16a34a);
+      border: none;
+      cursor: pointer;
+      font-weight: 900;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.92; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary {
+      background: rgba(148, 163, 184, 0.15);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      color: #cbd5e1;
+    }
+    button.danger {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fecaca;
+    }
+
+    .agent-badge {
+      display: inline-block;
+      background: rgba(245, 158, 11, 0.18);
+      border: 1px solid rgba(245, 158, 11, 0.45);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 900;
+      color: #fbbf24;
+      margin-left: 10px;
+    }
+
+    .log-container {
+      background: rgba(2,6,23,0.85);
+      border-radius: 12px;
+      padding: 14px;
+      height: 420px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+    .log-entry { margin-bottom: 8px; padding: 8px; border-radius: 8px; }
+    .log-entry.in { background: rgba(34, 197, 94, 0.08); border-left: 3px solid #22c55e; }
+    .log-entry.out { background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; }
+    .log-entry.error { background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; }
+    .log-entry.system { background: rgba(245, 158, 11, 0.08); border-left: 3px solid #f59e0b; }
+    .timestamp { color: #64748b; font-size: 11px; }
+
+    .clients {
+      max-height: 420px;
+      overflow: auto;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(2, 6, 23, 0.55);
+    }
+    .client-row {
+      display: grid;
+      grid-template-columns: 1.3fr 0.7fr 0.9fr;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+      align-items: center;
+    }
+    .client-row:last-child { border-bottom: 0; }
+    .client-row code { font-size: 11px; color: #cbd5e1; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(148, 163, 184, 0.08);
+      color: #cbd5e1;
+    }
+    .tag.ok { border-color: rgba(34,197,94,0.35); background: rgba(34,197,94,0.08); color: #86efac; }
+    .tag.warn { border-color: rgba(245,158,11,0.35); background: rgba(245,158,11,0.08); color: #fde68a; }
+
+    .mini { font-size: 12px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧟 ZombieCoder WebSocket v2.0</h1>
+    <p class="subtitle">Browser Test UI · Real agents + session persistence (48h) <span class="pill"><b id="client-count">0</b> clients</span></p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="row space" style="margin-bottom: 12px;">
+          <div>
+            <span id="status" class="status disconnected">Disconnected</span>
+            <span id="agent-badge" class="agent-badge" style="display:none">No Agent</span>
+            <span class="pill">Session <b id="session-id">-</b></span>
+          </div>
+          <div class="row">
+            <button id="connect-btn" onclick="connect()">Connect</button>
+            <button id="disconnect-btn" class="secondary" onclick="disconnect()" disabled>Disconnect</button>
+          </div>
+        </div>
+
+        <div class="row" style="margin-bottom: 10px;">
+          <select id="agent-select" style="flex: 1; min-width: 260px;">
+            <option value="">Select Agent...</option>
+          </select>
+          <button onclick="selectAgent()" id="select-agent-btn" disabled>Select</button>
+          <button onclick="resumeSavedSession()" id="resume-btn" class="secondary" disabled>Resume (48h)</button>
+          <button onclick="clearSession()" id="clear-btn" class="danger" disabled>Clear</button>
+        </div>
+
+        <div class="row">
+          <input type="text" id="message-input" placeholder="Type your message..." style="flex:1; min-width: 280px;" disabled>
+          <button onclick="sendMessage()" id="send-btn" disabled>Send</button>
+        </div>
+
+        <div class="mini" style="margin-top: 10px;">
+          Tip: connect → select agent → chat. Heartbeat is auto-handled.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row space" style="margin-bottom: 10px;">
+          <h3 style="color:#e2e8f0;">👥 Connected Clients</h3>
+          <span class="mini">auto-refresh</span>
+        </div>
+        <div class="clients" id="clients"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 14px;">
+      <div class="row space" style="margin-bottom: 10px;">
+        <h3 style="color:#22c55e;">📡 Event Log</h3>
+        <button onclick="clearLog()" class="secondary">Clear Log</button>
+      </div>
+      <div id="log" class="log-container"></div>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let currentAgentId = null;
+    let currentAgentName = null;
+    let messageBuffer = '';
+    let pollTimer = null;
+
+    function nowTime() { return new Date().toLocaleTimeString(); }
+
+    function log(message, type = 'system') {
+      const container = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + type;
+      entry.innerHTML = '<span class="timestamp">' + nowTime() + '</span> ' + message;
+      container.appendChild(entry);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function clearLog() { document.getElementById('log').innerHTML = ''; }
+
+    function updateStatus(status) {
+      const el = document.getElementById('status');
+      el.textContent = status;
+      el.className = 'status ' + status.toLowerCase();
+    }
+
+    function updateUI(connected) {
+      document.getElementById('connect-btn').disabled = connected;
+      document.getElementById('disconnect-btn').disabled = !connected;
+      document.getElementById('select-agent-btn').disabled = !connected;
+      document.getElementById('message-input').disabled = !connected || !currentAgentId;
+      document.getElementById('send-btn').disabled = !connected || !currentAgentId;
+      document.getElementById('resume-btn').disabled = !connected || !loadSavedSession()?.sessionId;
+      document.getElementById('clear-btn').disabled = !connected;
+    }
+
+    function setAgentBadge(name) {
+      const badge = document.getElementById('agent-badge');
+      if (!name) {
+        badge.style.display = 'none';
+        return;
+      }
+      badge.textContent = name;
+      badge.style.display = 'inline-block';
+    }
+
+    function setSessionText(value) {
+      document.getElementById('session-id').textContent = value || '-';
+    }
+
+    async function loadAgents() {
+      try {
+        const res = await fetch('/api/agents', { cache: 'no-store' });
+        const json = await res.json().catch(() => ({}));
+        const agents = json.data || json.agents || [];
+        const select = document.getElementById('agent-select');
+        select.innerHTML = '<option value="">Select Agent...</option>';
+        agents.forEach((a) => {
+          const opt = document.createElement('option');
+          opt.value = a.id;
+          opt.textContent = a.name + (a.type ? (' · ' + a.type) : '');
+          select.appendChild(opt);
+        });
+        log('Agents loaded: ' + agents.length, 'system');
+      } catch (e) {
+        log('Failed to load agents: ' + e, 'error');
+      }
+    }
+
+    function saveSession(sessionId) {
+      const now = Date.now();
+      const obj = {
+        sessionId,
+        agentId: currentAgentId || null,
+        agentName: currentAgentName || null,
+        createdAt: now,
+        expiresAt: now + 48 * 60 * 60 * 1000,
+      };
+      localStorage.setItem('zc_ws_session_v2', JSON.stringify(obj));
+      updateUI(!!ws);
+    }
+
+    function loadSavedSession() {
+      try {
+        const raw = localStorage.getItem('zc_ws_session_v2');
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        if (!obj?.sessionId || !obj?.expiresAt) return null;
+        if (Date.now() > obj.expiresAt) {
+          localStorage.removeItem('zc_ws_session_v2');
+          return null;
+        }
+        return obj;
+      } catch {
+        return null;
+      }
+    }
+
+    function clearSavedSession() {
+      localStorage.removeItem('zc_ws_session_v2');
+      updateUI(!!ws);
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function renderClients(snapshot) {
+      const container = document.getElementById('clients');
+      const clients = snapshot?.data?.clients || snapshot?.clients || [];
+      document.getElementById('client-count').textContent = String(clients.length || 0);
+      if (!clients.length) {
+        container.innerHTML = '<div class="client-row"><div class="mini">No active clients</div><div></div><div></div></div>';
+        return;
+      }
+      container.innerHTML = '';
+      clients.forEach((c) => {
+        const row = document.createElement('div');
+        row.className = 'client-row';
+        const kind = c.kind || 'unknown';
+        const tagClass = kind === 'editor' ? 'tag warn' : (kind === 'browser' ? 'tag ok' : 'tag');
+        row.innerHTML =
+          '<div><span class=\"' + tagClass + '\">' + escapeHtml(kind) + '</span> ' +
+          (c.name ? ('<b style=\"margin-left:8px\">' + escapeHtml(c.name) + '</b>') : '') +
+          '<div class=\"mini\"><code>' + escapeHtml(String(c.clientId || '').slice(0, 12)) + '</code>' +
+          (c.agentId ? (' · agent <code>' + escapeHtml(String(c.agentId).slice(0, 10)) + '</code>') : ' · no agent') +
+          '</div></div>' +
+          '<div><div class=\"mini\">session</div><code>' + escapeHtml(String(c.sessionId || '').slice(0, 16)) + '</code></div>' +
+          '<div><div class=\"mini\">activity</div><code>' + escapeHtml(String(c.lastActivityAt || '').split('T')[1]?.replace('Z','') || '-') + '</code></div>';
+        container.appendChild(row);
+      });
+    }
+
+    async function refreshClients() {
+      try {
+        const res = await fetch('/clients', { cache: 'no-store' });
+        const json = await res.json().catch(() => ({}));
+        renderClients(json);
+      } catch {
+        // ignore
+      }
+    }
+
+    function connect() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = protocol + '//' + window.location.host + '/ws';
+      updateStatus('Connecting');
+      log('Connecting to ' + wsUrl, 'system');
+
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        updateStatus('Connected');
+        log('WebSocket connected', 'system');
+        ws.send(JSON.stringify({ type: 'client.register', kind: 'browser', name: 'Browser Test UI' }));
+        updateUI(true);
+        loadAgents();
+        refreshClients();
+        pollTimer = setInterval(refreshClients, 2000);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const pretty = JSON.stringify(data, null, 2);
+
+          if (data.event === 'heartbeat.ping') {
+            ws.send(JSON.stringify({ type: 'heartbeat.pong', timestamp: new Date().toISOString() }));
+            log('heartbeat.pong sent (auto)', 'out');
+          }
+
+          if (data.event === 'session.init') {
+            setSessionText(data.sessionId || data.payload?.sessionId || '-');
+          }
+
+          if (data.event === 'session.update' || data.event === 'session.resumed') {
+            const sid = data.payload?.sessionId || data.sessionId;
+            if (sid) {
+              setSessionText(sid);
+              saveSession(sid);
+            }
+          }
+
+          if (data.event === 'session.cleared') {
+            setSessionText(data.payload?.sessionId || data.sessionId || '-');
+            clearSavedSession();
+            currentAgentId = null;
+            currentAgentName = null;
+            setAgentBadge(null);
+            updateUI(true);
+          }
+
+          if (data.event === 'agent.selected') {
+            currentAgentId = data.payload?.agentId || currentAgentId;
+            currentAgentName = data.payload?.agentName || currentAgentName;
+            setAgentBadge(currentAgentName);
+            updateUI(true);
+          }
+
+          if (data.event === 'clients.update') {
+            renderClients({ data: data.payload, clients: data.payload?.clients });
+          }
+
+          if (data.event === 'message.chunk') {
+            messageBuffer += data.payload?.content || '';
+          }
+
+          if (data.event === 'message.end') {
+            log('Response complete: ' + escapeHtml(messageBuffer.slice(0, 160)) + (messageBuffer.length > 160 ? '…' : ''), 'in');
+            messageBuffer = '';
+          }
+
+          log('← ' + escapeHtml(data.event) + '\\n<pre style=\"white-space:pre-wrap;opacity:0.85\">' + escapeHtml(pretty) + '</pre>', 'in');
+        } catch (e) {
+          log('← ' + escapeHtml(event.data), 'in');
+        }
+      };
+
+      ws.onerror = (error) => {
+        log('Error: ' + error, 'error');
+      };
+
+      ws.onclose = () => {
+        updateStatus('Disconnected');
+        log('WebSocket closed', 'system');
+        updateUI(false);
+        ws = null;
+        currentAgentId = null;
+        currentAgentName = null;
+        setAgentBadge(null);
+        setSessionText('-');
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = null;
+      };
+    }
+
+    function disconnect() {
+      if (ws) ws.close();
+    }
+
+    function selectAgent() {
+      const agentId = document.getElementById('agent-select').value;
+      if (!agentId) {
+        log('Please select an agent first', 'error');
+        return;
+      }
+      currentAgentId = agentId;
+      const msg = { type: 'agent.select', agentId };
+      ws.send(JSON.stringify(msg));
+      log('→ agent.select\\n<pre style=\"white-space:pre-wrap\">' + escapeHtml(JSON.stringify(msg, null, 2)) + '</pre>', 'out');
+    }
+
+    function resumeSavedSession() {
+      const saved = loadSavedSession();
+      if (!saved?.sessionId || !ws) return;
+      const msg = { type: 'session.resume', sessionId: saved.sessionId };
+      ws.send(JSON.stringify(msg));
+      log('→ session.resume\\n<pre style=\"white-space:pre-wrap\">' + escapeHtml(JSON.stringify(msg, null, 2)) + '</pre>', 'out');
+    }
+
+    function clearSession() {
+      if (!ws) return;
+      ws.send(JSON.stringify({ type: 'session.clear' }));
+      clearSavedSession();
+      currentAgentId = null;
+      currentAgentName = null;
+      setAgentBadge(null);
+      updateUI(true);
+      log('→ session.clear', 'out');
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('message-input');
+      const content = input.value.trim();
+      if (!content || !ws) return;
+      const msg = { type: 'chat.start', agentId: currentAgentId, messages: [{ role: 'user', content }], stream: true };
+      ws.send(JSON.stringify(msg));
+      log('→ chat.start\\n<pre style=\"white-space:pre-wrap\">' + escapeHtml(JSON.stringify(msg, null, 2)) + '</pre>', 'out');
+      input.value = '';
+    }
+
+    document.getElementById('message-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    (function bootstrap() {
+      const saved = loadSavedSession();
+      if (saved?.sessionId) {
+        log('Saved session available (48h): ' + escapeHtml(saved.sessionId), 'system');
+      }
+      refreshClients();
+      loadAgents();
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+// ─── Startup ─────────────────────────────────────────────────────────────────
+
 console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║          🧟 ZombieCoder Stock Server (Masood Engine)         ║
-║          By Sahon Srabon | Verified: Zero-Demo               ║
-║                                                              ║
-║  Listening on: http://0.0.0.0:${SERVER_PORT}                       ║
-║  Identity:     Google Antigravity | Gemini 1.5 Flash         ║
-║                                                              ║
-║  Endpoints:                                                  ║
-║    GET  /health                  Health check                ║
-║    POST /v1/chat/completions     OpenAI-compatible chat      ║
-║    POST /api/chat                Ollama-compatible chat      ║
-║    WS   /                        WebSocket streaming        ║
-║                                                              ║
-║  Default provider: Ollama @ ${DEFAULT_OLLAMA_ENDPOINT}   ║
-║  Tunnel Support:   Enabled (Port ${SERVER_PORT})               ║
-╚══════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║          🧟 ZombieCoder WebSocket Server v2.0 (Experimental)                   ║
+║                                                                              ║
+║  Architecture: Agent-First | Gateway-Mediated | Standard Events              ║
+║                                                                              ║
+║  Features:                                                                   ║
+║    ✓ Agent selection before chat                                             ║
+║    ✓ Uses main app API (never direct provider)                             ║
+║    ✓ Unified session management                                              ║
+║    ✓ Standard event format (v2.0)                                            ║
+║    ✓ Heartbeat with ACK (ping-pong)                                          ║
+║    ✓ Clean identity (ZombieCoder-by-SahonSrabon)                             ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 `);
+
+console.log(`🚀 Server running on ws://localhost:${SERVER_PORT}`);
+console.log(`🧪 Test page: http://localhost:${SERVER_PORT}/test`);
+console.log(`💚 Health check: http://localhost:${SERVER_PORT}/health`);
+console.log(`🔗 Connected to: ${NEXTJS_BASE_URL}`);
+console.log(`\nPress Ctrl+C to stop\n`);

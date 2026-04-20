@@ -175,8 +175,10 @@ export default function EditorsDashboard() {
         testInput = { sections: ["os", "runtime"] };
       } else if (tool.name === "file_list") {
         testInput = { path: "." };
-      } else if (tool.name === "file_read") {
+      } else if (tool.name === "file_read" || tool.name === "read_file") {
         testInput = { path: "package.json" };
+      } else if (tool.name === "search_code") {
+        testInput = { query: "mcpService" };
       }
 
       await testTool(tool.name, testInput);

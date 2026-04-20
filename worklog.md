@@ -105,11 +105,11 @@ Stage Summary:
 ---
 Task ID: 7
 Agent: Stock Server Subagent
-Task: Real-time streaming server on port 9999
+Task: Real-time streaming server on port 9998
 
 Work Log:
 - Created mini-services/stock-server/ with package.json and index.ts
-- Implemented Bun HTTP + WebSocket server on port 9999
+- Implemented Bun HTTP + WebSocket server on port 9998
 - Built OpenAI-compatible endpoint (POST /v1/chat/completions) with SSE streaming
 - Built Ollama-compatible endpoints (POST /api/chat, POST /api/generate) with NDJSON streaming
 - Built WebSocket endpoint for bidirectional streaming
@@ -164,7 +164,7 @@ Work Log:
 - Ran ESLint - zero errors
 - Verified all API endpoints return correct responses
 - Fixed status endpoint bug (Prisma promises not awaited)
-- Stock Server running on port 9999
+- Stock Server running on port 9998
 - Next.js dev server running on port 3000
 - Frontend rendering correctly with all components
 

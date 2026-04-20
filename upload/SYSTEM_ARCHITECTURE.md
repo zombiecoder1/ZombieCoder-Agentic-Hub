@@ -92,7 +92,7 @@
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   STOCK SERVER (Port 9999)                       │
+│                   STOCK SERVER (Port 9998)                       │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  Real-time Streaming Engine                               │   │
 │  │  - WebSocket: Bidirectional communication                 │   │
@@ -118,7 +118,7 @@
   - API audit middleware
 
 ### 2. **Stock Server** (`/src/stock/index.ts`)
-- **Port**: 9999 (dedicated streaming server)
+- **Port**: 9998 (dedicated streaming server)
 - **Responsibilities**:
   - Real-time streaming from providers to agents
   - WebSocket and HTTP SSE support
@@ -295,13 +295,13 @@ const prompt = formatTemplate(template, {
 
 ### Overview
 
-The Stock Server is a dedicated streaming engine that handles real-time communication between providers and clients. It runs on **port 9999** and supports multiple protocols.
+The Stock Server is a dedicated streaming engine that handles real-time communication between providers and clients. It runs on **port 9998** and supports multiple protocols.
 
 ### Supported Protocols
 
 #### 1. **WebSocket** (Bidirectional)
 ```typescript
-// Client connects to ws://localhost:9999
+// Client connects to ws://localhost:9998
 ws.send(JSON.stringify({
   id: 'request-123',
   prompt: 'Explain this code',
@@ -322,7 +322,7 @@ ws.on('message', (data) => {
 
 #### 2. **HTTP SSE** (Server-Sent Events)
 ```typescript
-// POST to http://localhost:9999/v1/chat/completions
+// POST to http://localhost:9998/v1/chat/completions
 // with { stream: true }
 // Receives SSE events:
 // data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"delta":{"content":"Hello"}}]}
@@ -332,7 +332,7 @@ ws.on('message', (data) => {
 
 #### 3. **OpenAI-Compatible API**
 ```bash
-curl -X POST http://localhost:9999/v1/chat/completions \
+curl -X POST http://localhost:9998/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama3.1",
@@ -343,7 +343,7 @@ curl -X POST http://localhost:9999/v1/chat/completions \
 
 #### 4. **Ollama-Compatible API**
 ```bash
-curl -X POST http://localhost:9999/api/chat \
+curl -X POST http://localhost:9998/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama3.1",
@@ -813,7 +813,7 @@ The system starts multiple services:
    - WebSocket server
    - Service orchestration
 
-2. **Stock Server**: Port 9999
+2. **Stock Server**: Port 9998
    - Real-time streaming
    - Provider communication
    - OpenAI/Ollama compatible APIs
@@ -835,7 +835,7 @@ The system starts multiple services:
 curl http://localhost:8000/health
 
 # Check Stock Server
-curl http://localhost:9999/health
+curl http://localhost:9998/health
 
 # Check system status
 curl http://localhost:8000/status
@@ -1022,7 +1022,7 @@ const result = await fetch('http://localhost:8000/mcp/execute', {
 ### Example 3: WebSocket Streaming
 
 ```typescript
-const ws = new WebSocket('ws://localhost:9999');
+const ws = new WebSocket('ws://localhost:9998');
 
 ws.on('open', () => {
   ws.send(JSON.stringify({

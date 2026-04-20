@@ -548,7 +548,7 @@
                 <div class="arrow">↓ ↑ WebSocket / HTTP</div>
                 <div class="diagram-box nextjs">⚡ Next.js App (Port 3000)</div>
                 <div class="arrow">↓ ↑ Internal API</div>
-                <div class="diagram-box stock">🧟 Stock Server (Port 9999)</div>
+                <div class="diagram-box stock">🧟 Stock Server (Port 9998)</div>
                 <div class="arrow">↓ ↑ Proxy Stream</div>
                 <div class="diagram-box">🔌 AI Provider API</div>
                 <div class="arrow" style="margin-left: 200px;">↔ Database</div>
@@ -570,7 +570,7 @@
                 <div class="flow-step">
                     <div class="number">2</div>
                     <div class="content">
-                        <h4>Stock Server / Masood Engine (Port 9999)</h4>
+                        <h4>Stock Server / Masood Engine (Port 9998)</h4>
                         <p>Bun runtime-এ চলা একটি আলাদা প্রক্সি সার্ভার যা WebSocket এবং HTTP API-এর মাধ্যমে 
                         AI প্রোভাইডারদের সাথে সংযোগ পরিচালনা করে। Zero-Demo নীতি অনুসরণ করে - কোনো mock নেই।</p>
                     </div>
@@ -706,7 +706,7 @@
             <div class="code-block">
 <span class="comment">// ─── Configuration Layer ─────────────────────────────────────────</span>
 <span class="keyword">const</span> <span class="function">SERVER_VERSION</span> = <span class="string">"1.0.0"</span>;
-<span class="keyword">const</span> <span class="function">SERVER_PORT</span> = <span class="function">Number</span>(process.env.PORT || <span class="string">9999</span>);
+<span class="keyword">const</span> <span class="function">SERVER_PORT</span> = <span class="function">Number</span>(process.env.PORT || <span class="string">9998</span>);
 <span class="keyword">const</span> <span class="function">DEFAULT_OLLAMA_ENDPOINT</span> = process.env.OLLAMA_BASE_URL || <span class="string">"http://localhost:11434"</span>;
 
 <span class="comment">// ─── Type Definitions ──────────────────────────────────────────</span>
@@ -960,7 +960,7 @@
             
             <h3>🔹 Stock Server (.env)</h3>
             <div class="code-block">
-<span class="type">PORT</span>=<span class="string">9999</span>                           <span class="comment"># সার্ভার পোর্ট</span>
+<span class="type">PORT</span>=<span class="string">9998</span>                           <span class="comment"># সার্ভার পোর্ট</span>
 <span class="type">OLLAMA_BASE_URL</span>=<span class="string">http://localhost:11434</span>  <span class="comment"># Ollama endpoint</span>
 <span class="type">STOCK_DEFAULT_MODEL</span>=<span class="string">gemma2:2b</span>           <span class="comment"># ডিফল্ট AI মডেল</span>
 <span class="type">NEXTJS_BASE_URL</span>=<span class="string">http://localhost:3000</span>   <span class="comment"># Next.js অ্যাপ URL</span>
@@ -1046,7 +1046,7 @@
                 <h4>🎯 ZombieCoder API-এর মূল বৈশিষ্ট্যসমূহ</h4>
                 <ul style="margin-left: 20px; margin-top: 10px;">
                     <li><strong>Real Streaming:</strong> কোনো mock নেই, সরাসরি AI provider API-তে কানেক্ট</li>
-                    <li><strong>Dual Server:</strong> Next.js (3000) + Stock Server (9999) আর্কিটেকচার</li>
+                    <li><strong>Dual Server:</strong> Next.js (3000) + Stock Server (9998) আর্কিটেকচার</li>
                     <li><strong>Multi-Provider:</strong> Ollama, OpenAI, Gemini সাপোর্ট</li>
                     <li><strong>WebSocket:</strong> Real-time bidirectional streaming</li>
                     <li><strong>Type Safety:</strong> সম্পূর্ণ TypeScript codebase</li>
@@ -1066,7 +1066,7 @@
             <p>🧟 ZombieCoder API Documentation</p>
             <p>By Sahon Srabon | Zero-Demo Verified | Google Antigravity</p>
             <p style="margin-top: 10px; font-size: 0.8rem;">
-                Generated: April 16, 2026 | Stock Server Port: 9999 | Next.js Port: 3000
+                Generated: April 16, 2026 | Stock Server Port: 9998 | Next.js Port: 3000
             </p>
         </footer>
     </div>
